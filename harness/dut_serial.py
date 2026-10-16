@@ -107,7 +107,7 @@ def parse_sxprobe(text):
     e = re.search(r"^sxprobe: end restore=(\S+) rx=(.*)$", text, re.M)
     if e:
         out["restore"], out["rx"] = e.group(1), e.group(2).strip()
-        out["ok"] = bool(out["rows"])
+        out["ok"] = bool(out["rows"]) and out["restore"] == "ESP_OK" and bool(h) and (not out.get("header", {}).get("points") or len(out["rows"]) == int(out["header"]["points"]))
     out["usage"] = "usage: lora sxprobe" in text
     return out
 
@@ -436,12 +436,18 @@ class Dut:
         spec = self.p["commands"]["probe"]
         r = self.run("probe", timeout_s=spec["timeout_s"] + pts * spec.get("timeout_per_point_s", 0.03),
                      start_khz=start, stop_khz=stop, step_khz=step_khz, **q)
-        rows = [x for x in r.get("rows", []) if x["avg_dbm"] is not None]
-        if not rows:
-            return {"detected": False, "locked": False, "raw_ok": False, "snr_db": None, "level_db": None,
+        all_rows = r.get("rows", [])
+        rows = [x for x in all_rows if x["avg_dbm"] is not None and not (x["err_rx"] & 0x0040)]
+        # Critical: DO NOT discard PLL failure rows before deciding whether the sweep locked.
+        # A boundary sweep may have valid RSSI at some points and no RSSI at failed points.
+        locked = bool(all_rows) and not any(x["err_rx"] & 0x0040 for x in all_rows)
+        complete = bool(r.get("ok") and r.get("_done") and len(all_rows) == pts)
+        if not rows or not locked or not complete:
+            return {"detected": False, "locked": locked, "raw_ok": False, "snr_db": None, "level_db": None,
                     "offset_hz": None, "noise_db": None, "peaks": [], "image_db": None, "image_lower_bound": False,
-                    "rbw_hz": q.get("bw"), "units": "dBm (RSSI)", "note": "no rows"}
-        locked = not any(x["err_rx"] & 0x0040 for x in rows)  # PLL_LOCK device error bit
+                    "rbw_hz": q.get("bw"), "units": "dBm (RSSI, uncalibrated)",
+                    "note": "rejected incomplete/no-lock sweep: %d/%d rows, %d RSSI, restore=%s done=%s" %
+                    (len(all_rows), pts, len(rows), r.get("restore"), r.get("_done"))}
         vals = sorted(x["avg_dbm"] for x in rows)
         floor = vals[len(vals) // 2]
         peaks = sorted(((x["khz"] * 1000 - tune_hz, x["avg_dbm"] - floor) for x in rows), key=lambda p: -p[1])
@@ -455,7 +461,8 @@ class Dut:
                                       "dBm (RSSI, 0.5 dB steps)", locked,
                                       "RSSI sweep: offset resolution = step; floor clamps at -127.5 dBm")
         res["image_db"] = None
-        res["note"] += "; image rejection N/A (needs the SX1262 IF, not documented here)"
+        res["note"] += "; RSSI sweep searches absolute RF steps: moving the nominal centre alone " \
+                       "does not independently validate LO retune; image rejection N/A"
         return res
 
     def close(self):

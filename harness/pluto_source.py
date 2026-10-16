@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import sys
 import time
@@ -110,11 +111,15 @@ class PlutoSource:
     def _check_safety(self, gain_db):
         if self.backend == "sim":
             return
-        if self.fixed_atten_db is None or self.fixed_atten_db < self.min_fixed_atten_db:
-            raise SafetyError("refusing TX: fixed attenuation %s dB < required %s dB. Fit the fixed "
-                              "attenuator and pass --fixed-atten-db." % (self.fixed_atten_db, self.min_fixed_atten_db))
-        if gain_db > self.max_gain_db:
-            raise SafetyError("refusing TX: hardwaregain %.2f dB above limit %.2f dB" % (gain_db, self.max_gain_db))
+        required_atten_db = max(30.0, float(self.min_fixed_atten_db))
+        allowed_gain_db = min(-20.0, float(self.max_gain_db))
+        if (self.fixed_atten_db is None or not math.isfinite(float(self.fixed_atten_db)) or
+                float(self.fixed_atten_db) < required_atten_db):
+            raise SafetyError("refusing TX: at least %.1f dB of physically verified fixed "
+                              "attenuation is required, declared %s" % (required_atten_db, self.fixed_atten_db))
+        if not math.isfinite(gain_db) or gain_db > allowed_gain_db:
+            raise SafetyError("refusing TX: gain %s exceeds immutable cap %.1f dB" %
+                              (gain_db, allowed_gain_db))
 
     def _attr(self, dev, ch, name, value, output=True):
         dev.find_channel(ch, output).attrs[name].value = str(value)

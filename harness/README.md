@@ -1,6 +1,8 @@
 # SX1262 / LR2021 receive bench harness
 
-Target board for this repo: **Heltec WiFi LoRa 32 V4** (SX1262), source **Pluto-compatible AD9361**, reference **RTL-SDR**. The default DUT profile `sx1262_sdr_tbd` is a **TODO placeholder** until this repo's firmware exists: it runs in `--sim` only and refuses real hardware.
+Target board for this repo: **Heltec WiFi LoRa 32 V4** (SX1262), source **Pluto-compatible AD9361**, reference **RTL-SDR V4** where supported. This is the **one authoritative bench runner**; the root `tools/analyze_sweep.py` is only an offline log audit parser.
+
+**Start with [LOCAL_QUICKSTART.md](LOCAL_QUICKSTART.md).** The consolidated RX-only guardrails require a source-OFF control per measurement, reject partial PLL-failed scans, and enforce an explicit physical TX arming step. These changes were made after the historical simulated sample-output run below. The default DUT profile `sx1262_sdr_tbd` is a **TODO placeholder** until this repo's firmware exists: it runs in `--sim` only and refuses real hardware.
 
 This harness tests whether an SX1262 or LR2021 board really receives at a given frequency, and how well. It uses a
 **PlutoSDR** as the signal source and an **RTL-SDR** as the reference receiver. It puts into practice the test plan in
@@ -8,8 +10,8 @@ section 8 of the REA deep dive (the lessons are summarised in [`TESTING-NOTES.md
 `research/sx1262-range/README.md` of SAMS0N1TE/lr2021-sdr. That study used one board, no external signal, a single
 pass and no threshold for "works".
 
-It is ready to drop into the new SX1262-SDR repo. All board-specific command text lives in
-`config/dut_profiles.json`, so a new firmware only needs a new profile there.
+This is now the integrated SX1262-SDR bench harness. All board-specific command text lives in
+`config/dut_profiles.json`; the Heltec requires its own compatible firmware, tested parser, and verified profile **before live operation**.
 
 > Status: tested end to end **in simulation only** (see "Sample output"). Not yet run against real hardware.
 
@@ -108,11 +110,13 @@ pip install -r requirements.txt
    Unknown values stay `null`. They never get a default number.
 3. **Run.**
    ```
-   python run_sweep.py --config my_bench.json --fixed-atten-db 40 --port COM39
+   # FUTURE ONLY, when verified Heltec RX firmware/profile, revision,
+   # FEM, filter, measured path attenuation and controlled cabling exist:
+   python run_sweep.py --config my_bench.json --profile VERIFIED_HELTEC_RX_PROFILE --port COMXX --arm-rf
    ```
-   It asks for the board ID, firmware commit and temperature, then prompts at each cabling step.
+   It refuses TX without a verified profile, board revision/FEM, actual source filter, declared fixed attenuation >=30 dB, `--arm-rf` and an exact operator-typed phrase. `--yes` is **simulation-only**. It asks for firmware commit and temperatures, then prompts for cabling at each stage.
 4. **Read the results.** Open `results/<run>/summary.csv` and `pass_fail.png`. `measurements.csv` has every rep,
-   `meta.json` has everything needed to repeat the run, and `run.log` has the raw console traffic.
+   `meta.json` has configuration and sweep order, and `run.log` has the raw console traffic. An append-only `SX1262-SDR.log` is also created in the **directory from which the program was run**.
 
 ### Simulation demo
 
@@ -141,18 +145,19 @@ in one.
 | Spur map | DUT input terminated, Pluto off, at F and F+retune | What does the board hear when nothing is connected? Its own clocks show up here. If one sits where the test tone will land, that frequency is marked `spur_conflict`. |
 | Base | Tone at F+delta, DUT tuned to F | **SNR**: how far the tone stands above the noise. **Noise floor**: the background level. **ppm**: how far the DUT's frequency is from the Pluto's. **Image rejection**: how much weaker the mirror copy at F-delta is. |
 | Check 1: source shift | Tone moved +shift | A real reception moves the same way and keeps its level. A spur from the board does not move. |
-| Check 2: retune | DUT tuned to F+retune | A real reception moves the opposite way. An image or a spur tied to the receiver's own LO moves wrongly. |
-| Check 3: attenuation | Tone 10 dB lower | A real, linear reception drops by 10 dB (more exactly, by the 10 dB step the RTL measured). Compression, AGC or a different signal does not. |
-| Check 4: RTL clean | Result of the source check | The source had no spur above `rtl.spur_dbc_max` where the DUT could hear it. |
+| Check 2: retune **(IQ profiles only)** | DUT tuned to F+retune | A simultaneous IQ receiver should report the expected opposite baseband-offset movement. Not independent for a serial SX1262 absolute-frequency RSSI scan and thus excluded there. |
+| Check 3: attenuation | Tone 10 dB lower | The response should drop by the measured source step (nominally 10 dB), without AGC obscuring it. |
+| Check 4: source OFF **(all profiles)** | Pluto DDS and LO disabled; repeat the same DUT reception test | A source-related response must disappear or fall below threshold. Existing board spurs should remain and invalidate a false hit. |
+| Check 5: reference clean | Independent RTL observation where physically possible | If the reference cannot cover the frequency, the source is **UNVERIFIED**, not clean. |
 | MDS | Source stepped down until SNR drops below threshold | The weakest signal the board still detects (in dBm once the Pluto output and losses are known, otherwise as Pluto gain). |
 | IMD (optional, I/Q profiles) | Two tones; look for third-order products | How badly two strong signals mix into false ones. Shown as a lower bound when the products stay under the reported peaks. |
 
 **Pass rule (in `config/default.json`, field `pass`).** An item passes if:
 - SNR is at least `snr_min_db` (10 dB),
-- all four checks pass, and
+- all checks applicable to that receiver architecture pass, including the source-OFF control, and
 - there is no spur conflict.
 
-A frequency passes if at least `freq_pass_fraction` (0.8) of its reps pass. A frequency is reported as
+For SX1262 RSSI sweeps, the required checks are source-shift, attenuation, source-OFF, and reference purity. The retune-offset test is expressly **not** credited as independent evidence. A frequency passes if at least `freq_pass_fraction` (0.8) of its reps pass. A frequency is reported as
 **UNVERIFIED**, not PASS, when the RTL could not see the source, for example above the dongle's range (set
 `rtl.range_hz`).
 
@@ -164,7 +169,8 @@ A frequency passes if at least `freq_pass_fraction` (0.8) of its reps pass. A fr
     step.
   - RSSI comes in 0.5 dB steps and floors at -127.5 dBm (`research/sx1262-range/README.md:216-217`), so very low
     SNRs read short.
-  - Image rejection is N/A because the SX1262 IF is not documented here.
+  - Image rejection is N/A because the SX1262 IF is not documented here. PLL errors on **any** scanned step or an incomplete SXPROBE response reject the entire measurement, including failed steps without RSSI.
+  - The sweep visits absolute RF points: moving the displayed nominal centre does not prove a changed receiver IF or LO. The paired Pluto source-OFF control is mandatory.
 - **`lakeshark_lr2021`: `lora lrprobe`.** LS:`ls_lora_lr20xx.c:4177-4199` parses the arguments, `:4238-4244` and
   `:4154-4174` print the output.
   - The board itself reports only the 3 strongest peaks of a 1024-bin spectrum, as dB over the median bin.
@@ -178,7 +184,9 @@ A frequency passes if at least `freq_pass_fraction` (0.8) of its reps pass. A fr
 - **`sx1262_sdr_tbd`.** A placeholder for the new repo. It is a copy of the sxprobe profile until that firmware's
   console is known.
 
-## Sample output (simulation)
+## Sample output (simulation; historical pre-consolidation run)
+
+The checked-in sample was produced by the original Grok harness **before** the consolidated source-OFF and RSSI verdict fixes. Do not treat its per-frequency verdicts as current regression expectations. Generate fresh output with `python run_sweep.py --sim --config config/sim_example.json`.
 
 `sample_output/20261016-134931_heltec-v4-sim_SIM/` is a small example from `python run_sweep.py --sim --config config/sim_example.json --label heltec-v4-sim`: `summary.csv`, `meta.json` and `pass_fail.png`. It used 5 reps, seed 20261016, Python 3.14.3 on Windows, and the simulated stock Pluto range, so 169.4 and 315 MHz were skipped.
 

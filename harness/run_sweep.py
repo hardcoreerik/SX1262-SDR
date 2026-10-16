@@ -48,7 +48,7 @@ MEAS_FIELDS = ["run_id", "order", "rep", "freq_hz", "tune_hz", "source_hz", "sta
                "ppm_dut_vs_pluto", "image_rejection_db", "image_lower_bound", "shift_moved_hz", "shift_ok",
                "retune_moved_hz", "retune_ok", "atten_drop_db", "atten_expected_db", "atten_ok", "rtl_clean",
                "rtl_worst_dbc", "spur_conflict", "tx_gain_db", "input_dbm", "mds_tx_gain_db", "mds_input_dbm",
-               "mds_note", "imd_dbc", "imd_lower_bound", "timestamp"]
+               "mds_note", "source_off_snr_db", "source_off_ok", "capture_ok", "rx_note", "imd_dbc", "imd_lower_bound", "timestamp"]
 
 
 def deep_update(a, b):
@@ -84,7 +84,7 @@ def git_commit():
 
 
 def evaluate(base, shift, retune, att, rtl_clean, p, shift_hz, retune_hz, atten_expected_db, tol_hz,
-             spur_conflict, unverified_as="unverified"):
+             spur_conflict, unverified_as="unverified", source_off=None):
     """Pure pass/fail logic. Returns (status, reasons, checks dict)."""
     reasons, checks = [], {}
 
@@ -93,6 +93,8 @@ def evaluate(base, shift, retune, att, rtl_clean, p, shift_hz, retune_hz, atten_
 
     if not base.get("locked", True):
         reasons.append("no_lock")
+    if base.get("raw_ok") is False:
+        reasons.append("invalid_probe")
     if not det(base):
         reasons.append("no_response")
     snr = base.get("snr_db")
@@ -121,10 +123,23 @@ def evaluate(base, shift, retune, att, rtl_clean, p, shift_hz, retune_hz, atten_
         checks["atten_10db"] = {"pass": False, "drop_db": None}
     # 4 RTL: source clean at the suspect frequencies
     checks["rtl_clean"] = {"pass": rtl_clean is True, "value": rtl_clean}
+    # A paired source-OFF capture is an independent negative control for RSSI and IQ.
+    if source_off is None:
+        checks["source_off"] = {"pass": False, "value": "not_run"}
+    else:
+        off_snr = source_off.get("snr_db")
+        quiet = (not source_off.get("detected") or
+                 (off_snr is not None and off_snr < p["snr_min_db"]))
+        checks["source_off"] = {
+            "pass": bool(source_off.get("raw_ok") and source_off.get("locked", True) and quiet),
+            "snr_db": off_snr, "value": "quiet" if quiet else "residual_signal"}
     unverified = False
     for name in p["require_checks"]:
         c = checks.get(name)
         if c and not c["pass"]:
+            if name == "source_off" and source_off is None:
+                unverified = True
+                continue
             if name == "rtl_clean" and rtl_clean is None and unverified_as != "fail":
                 if unverified_as == "unverified":
                     unverified = True
@@ -144,13 +159,20 @@ class Runner:
         self.yes = assume_yes or sim
         sw = cfg["sweep"]
         self.seed = seed if seed is not None else (sw["seed"] if sw["seed"] is not None else random.SystemRandom().randrange(1 << 31))
-        stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+        stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
         self.run_id = "%s_%s%s" % (stamp, cfg["label"], "_SIM" if sim else "")
         self.out = os.path.join(out_root or os.path.join(HERE, "results"), self.run_id)
-        os.makedirs(self.out, exist_ok=True)
+        os.makedirs(self.out, exist_ok=False)
         self._logf = open(os.path.join(self.out, "run.log"), "w", encoding="utf-8")
+        # Required by project contract: persist a second log in the launch directory.
+        self._cwd_logf = open(os.path.join(os.getcwd(), "SX1262-SDR.log"), "a", encoding="utf-8")
         self.warnings = []
         prof = load_profiles()[cfg["dut"]["profile"]]
+        # Reject a placeholder before opening a real Pluto RF backend.
+        if not sim and prof.get("todo"):
+            self._logf.close()
+            self._cwd_logf.close()
+            raise RuntimeError("Heltec receiver profile is a TODO; no Pluto access is permitted")
         self.bench = None
         if sim:
             from sim import SimBench
@@ -176,9 +198,27 @@ class Runner:
             except Exception as e:  # noqa: BLE001
                 self.warn("RTL reference unavailable (%s): rtl_clean will be UNVERIFIED" % e)
         dc = cfg["dut"]
-        self.dut = Dut(dc["profile"], dc["port"], dc["serial_number"], self.bench, overrides=dc["overrides"],
-                       log=self.log_raw)
+        try:
+            self.dut = Dut(dc["profile"], dc["port"], dc["serial_number"], self.bench,
+                           overrides=dc["overrides"], log=self.log_raw)
+        except BaseException:
+            # If __init__ raises, main() has no fully constructed Runner to close.
+            self.src.disable()
+            if self.rtl:
+                self.rtl.close()
+            self._logf.close()
+            self._cwd_logf.close()
+            raise
         d = self.dut.params
+        # RSSI sweeps do NOT independently test LO retuning: a shifted nominal
+        # centre with the same absolute scan steps produces a tautological offset.
+        # Use source-shift, attenuation and paired source-OFF instead.
+        required = self.cfg["pass"]["require_checks"]
+        if self.dut.kind == "rssi_sweep":
+            self.cfg["pass"]["require_checks"] = list(self.cfg["pass"].get(
+                "rssi_require_checks", ["source_shift", "atten_10db", "source_off", "rtl_clean"]))
+        elif "source_off" not in required:
+            required.append("source_off")
         if self.dut.kind == "iq_peaks":
             self.rbw = 4 * d.get("bw", 31250) / 1024.0
             self.nyq = 2 * d.get("bw", 31250)
@@ -190,15 +230,34 @@ class Runner:
             self.nyq = None
         self.tol = sw["offset_tol_hz"] or (max(2 * self.rbw, 300.0) if self.dut.kind != "rssi_sweep" else 1.5 * self.rbw)
 
+    def close(self):
+        # Must run on *every* exception, including failures before measurements.csv.
+        try:
+            if hasattr(self, "src"):
+                self.src.disable()
+        finally:
+            for dev in (getattr(self, "dut", None), getattr(self, "rtl", None)):
+                if dev is not None:
+                    try:
+                        dev.close()
+                    except Exception as exc:
+                        print("cleanup warning: %s" % exc, file=sys.stderr)
+            for fh in (getattr(self, "_logf", None), getattr(self, "_cwd_logf", None)):
+                if fh is not None and not fh.closed:
+                    fh.close()
+
     # ------------------------------------------------------------ utils --
     def log(self, msg):
         line = "[%s] %s" % (dt.datetime.now().strftime("%H:%M:%S"), msg)
         print(line, flush=True)
-        self._logf.write(line + "\n")
-        self._logf.flush()
+        for fh in (self._logf, self._cwd_logf):
+            fh.write(line + "\n")
+            fh.flush()
 
     def log_raw(self, txt):
-        self._logf.write(txt + ("\n" if not txt.endswith("\n") else ""))
+        for fh in (self._logf, self._cwd_logf):
+            fh.write(txt + ("\n" if not txt.endswith("\n") else ""))
+            fh.flush()
 
     def warn(self, msg):
         self.warnings.append(msg)
@@ -216,7 +275,7 @@ class Runner:
 
     def total_loss_db(self):
         pth = self.cfg["path"]
-        parts = [pth["fixed_atten_db"], pth["cable_loss_db"], pth["step_atten_db"]]
+        parts = [pth["fixed_atten_db"], pth.get("filter_loss_db"), pth["cable_loss_db"], pth["step_atten_db"]]
         if self.cfg["rtl"]["path"] == "splitter":
             parts.append(pth["splitter_loss_db"])
         if any(x is None for x in parts):
@@ -316,7 +375,7 @@ class Runner:
         sw = self.cfg["sweep"]
         d, s, r = sw["delta_hz"], sw["shift_hz"], sw["retune_hz"]
         # offsets relative to F where a real response is expected (tune F and tune F+r)
-        expect = [d, d + s, -d]  # spur offsets are stored relative to F for both tunes
+        expect = [d, d + s]  # spur offsets are stored relative to absolute F, not the nominal sweep centre
         # a spur anywhere the base search could pick it up (ppm window) is a confound
         win = max(self.window(f), 2 * self.tol)
         return any(abs(o - e) <= win for o, _ in spurs.get(f, []) for e in expect)
@@ -373,15 +432,19 @@ class Runner:
         base = self.measure(f, src_hz, g0, d, self.window(f))
         o0 = base["offset_hz"] if base.get("detected") else d
         shift = self.measure(f, src_hz + s, g0, o0 + s, 3 * self.tol)
-        retune = self.measure(f + r, src_hz, g0, o0 - r, 3 * self.tol)
+        retune = (None if self.dut.kind == "rssi_sweep" else
+                  self.measure(f + r, src_hz, g0, o0 - r, 3 * self.tol))
         att = self.measure(f, src_hz, g0 - a, o0, 3 * self.tol)
+        self.src.disable()
+        source_off = self.dut.measure(f, o0, 3 * self.tol)
         rr = rtl_res.get(f, {})
         rtl_clean = rr.get("clean") if rr else None
         step = rr.get("source_step_10db_measured") if rr else None
         atten_expected = step if (step is not None and abs(step - a) <= 1.5) else a
         conflict = self.spur_conflict(f, spurs)
         status, reasons, checks = evaluate(base, shift, retune, att, rtl_clean, p, s, r, atten_expected, self.tol,
-                                           conflict, p.get("unverified_rtl_counts_as", "unverified"))
+                                           conflict, p.get("unverified_rtl_counts_as", "unverified"),
+                                           source_off=source_off)
         mds_g, mds_note = (None, "")
         if sw["mds"]["enabled"] and base.get("detected"):
             mds_g, mds_note = self.mds(f, src_hz, g0, o0)
@@ -397,12 +460,15 @@ class Runner:
                "offset_hz": _r(base.get("offset_hz")), "expected_offset_hz": d, "ppm_dut_vs_pluto": _r(ppm, 3),
                "image_rejection_db": base.get("image_db"), "image_lower_bound": base.get("image_lower_bound"),
                "shift_moved_hz": _r(checks["source_shift"]["moved_hz"]), "shift_ok": checks["source_shift"]["pass"],
-               "retune_moved_hz": _r(checks["retune"]["moved_hz"]), "retune_ok": checks["retune"]["pass"],
+               "retune_moved_hz": _r(checks["retune"]["moved_hz"]) if retune is not None else None,
+               "retune_ok": checks["retune"]["pass"] if retune is not None else None,
                "atten_drop_db": _r(checks["atten_10db"].get("drop_db")), "atten_expected_db": atten_expected,
                "atten_ok": checks["atten_10db"]["pass"], "rtl_clean": rtl_clean, "rtl_worst_dbc": rr.get("worst_dbc") if rr else None,
                "spur_conflict": conflict, "tx_gain_db": g0, "input_dbm": self.input_dbm(g0),
                "mds_tx_gain_db": mds_g, "mds_input_dbm": self.input_dbm(mds_g) if mds_g is not None else None,
-               "mds_note": mds_note, "imd_dbc": imd_v, "imd_lower_bound": imd_lb, "timestamp": now_iso()}
+               "mds_note": mds_note, "source_off_snr_db": _r(source_off.get("snr_db")),
+               "source_off_ok": checks["source_off"]["pass"], "capture_ok": base.get("raw_ok"),
+               "rx_note": base.get("note"), "imd_dbc": imd_v, "imd_lower_bound": imd_lb, "timestamp": now_iso()}
         self.log("#%03d rep%d %9.3f MHz %-10s snr=%s shift=%s retune=%s att=%s rtl=%s mds_gain=%s %s" % (
             order, rep, f / 1e6, status, row["snr_db"], row["shift_ok"], row["retune_ok"], row["atten_drop_db"],
             rtl_clean, mds_g, row["fail_reasons"]))
@@ -461,10 +527,6 @@ class Runner:
         with open(os.path.join(self.out, "meta.json"), "w") as fh:
             json.dump(meta, fh, indent=2, default=str)
         self.print_summary(summary)
-        self.dut.close()
-        if self.rtl:
-            self.rtl.close()
-        self._logf.close()
         return self.out, summary
 
     def summarise(self, freqs, rows):
@@ -533,7 +595,8 @@ def main(argv=None):
     ap.add_argument("--imd", action="store_true", help="also run two-tone IMD (I/Q profiles only)")
     ap.add_argument("--no-rtl", action="store_true")
     ap.add_argument("--out", help="results root (default ./results)")
-    ap.add_argument("--yes", action="store_true", help="do not wait at cabling prompts (only for fixed setups)")
+    ap.add_argument("--yes", action="store_true", help="skip prompts in simulation only")
+    ap.add_argument("--arm-rf", action="store_true", help="hardware only: explicitly acknowledge low-power conducted RF work")
     ap.add_argument("--no-plot", action="store_true")
     a = ap.parse_args(argv)
     extra = {"dut": {}, "pluto": {}, "path": {}, "sweep": {}, "rtl": {}}
@@ -554,13 +617,42 @@ def main(argv=None):
     if a.sim_pluto_range:
         lo, hi = a.sim_pluto_range.split(":")
         rng = (float(lo), float(hi))
-    runner = Runner(cfg, a.sim, a.out, a.yes, rng, a.seed)
+    if not a.sim:
+        if a.yes:
+            print("REFUSED: --yes is simulation-only; cabling confirmation cannot be bypassed.")
+            return 2
+        if not a.arm_rf:
+            print("REFUSED: real Pluto TX requires --arm-rf, a verified conducted RF path, and an operator confirmation.")
+            return 2
+        path = cfg["path"]
+        if (path.get("fixed_atten_db") is None or path["fixed_atten_db"] < 30 or
+                not path.get("lowpass_or_bandpass") or
+                "TODO" in str(path["lowpass_or_bandpass"]).upper()):
+            print("REFUSED: specify fitted >=30 dB fixed attenuation and an actual source output filter.")
+            return 2
+        if not cfg["meta"].get("board_revision") or not cfg["meta"].get("fem_part"):
+            print("REFUSED: first identify your actual Heltec board revision and RF front-end in config.")
+            return 2
+        try:
+            answer = input("With TX OFF, verify coax, filter, attenuators and terminations. Type ARM CONDUCTED RF: ")
+        except (KeyboardInterrupt, EOFError):
+            return 130
+        if answer != "ARM CONDUCTED RF":
+            print("Not armed; no hardware opened.")
+            return 2
+    runner = None
     try:
+        runner = Runner(cfg, a.sim, a.out, a.yes, rng, a.seed)
         out, summary = runner.run()
     except KeyboardInterrupt:
-        runner.src.disable()
-        print("aborted; Pluto TX disabled")
+        print("aborted; Pluto TX shutdown requested")
         return 130
+    except Exception as exc:
+        print("harness failure (not a measurement): %s" % exc, file=sys.stderr)
+        return 1
+    finally:
+        if runner is not None:
+            runner.close()
     if not a.no_plot:
         try:
             import plot_results

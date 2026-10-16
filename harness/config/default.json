@@ -39,10 +39,11 @@
   "path": {
     "fixed_atten_db": null,
     "lowpass_or_bandpass": "TODO: part number and passband",
+    "filter_loss_db": null,
     "cable_loss_db": null,
     "splitter_loss_db": null,
     "step_atten_db": 0.0,
-    "_note": "total loss Pluto->DUT = fixed + filter/cable + splitter + step. Enter measured values; null stays null in the output"
+    "_note": "total loss Pluto->DUT = fixed + filter insertion loss + cable + splitter + step. Keep filter_loss_db null until measured: MDS input dBm MUST remain unknown."
   },
   "sweep": {
     "frequencies_mhz": [
@@ -86,6 +87,13 @@
       "source_shift",
       "retune",
       "atten_10db",
+      "source_off",
+      "rtl_clean"
+    ],
+    "rssi_require_checks": [
+      "source_shift",
+      "atten_10db",
+      "source_off",
       "rtl_clean"
     ],
     "atten_tol_db": 2.0,
