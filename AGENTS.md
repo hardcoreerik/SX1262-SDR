@@ -14,6 +14,15 @@ The experiment's owner is Erik; do not assume blanket permission to flash a conn
 - Separate measured facts from hypotheses and simulated/fixture outcomes.
 - Never copy GPL sources without deliberately reviewing license obligations and providing attribution.
 
+## Authoritative execution harness
+
+- Use `harness/run_sweep.py` for simulator, source/DUT orchestration and future on-device measurements.
+- The root `tools/analyze_sweep.py` is a read-only compatibility parser, not a competing hardware runner.
+- Keep the real-device DUT profile disabled until firmware and pin map are validated.
+- Never turn an RSSI step sweep into an IQ claim or treat the swept-centre offset as an independent LO-retune check.
+- Require a paired transmitter-OFF control for every frequency/repetition.
+- No real TX without `--arm-rf`, operator interlock, measured adequate attenuation and known board FEM revision.
+
 ## Repeatable test evidence
 - Save one log file named SX1262-SDR.log in the **process current working directory**, regardless of script location.
 - Store raw session logs with timestamp, firmware commit, silicon identity, board revision, TCXO and antenna path, calibration mode, frequency, errors/status, RSSI, ambient/test setup, and source-on/off.

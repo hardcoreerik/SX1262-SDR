@@ -16,6 +16,23 @@ Our question: can the published SX1262 PLL no-lock window near **1,448–2,622 M
 - Our private research archive: https://github.com/hardcoreerik/REA-Results
 - Full local starter bundle and a longer session handoff exist separately; this branch is the collaborative source of truth after review.
 
+## Single test harness (Grok + ChatGPT consolidation)
+
+**Use [harness/](harness/) as the authoritative bench runner.** The root `tools/analyze_sweep.py` and `src/sx1262_sdr/analysis.py` are *offline SXPROBE log audit tools*, not a second hardware harness. The consolidated runner is still simulation-only for the actual Heltec V4 until a real receive-only firmware profile exists.
+
+First run locally from the repository root:
+
+    python -m pip install numpy matplotlib pytest
+    python -m pytest -q harness/tests
+    python -m unittest discover -s tests -v
+    python harness/run_sweep.py --sim --config harness/config/sim_example.json --no-plot
+
+The runner appends `SX1262-SDR.log` to the directory from which it was invoked and keeps full run artifacts inside `harness/results/<run-id>/`. All simulated outputs are labeled SIM and **are not hardware observations**.
+
+**No real Pluto transmission is enabled by these commands.** Hardware use additionally requires `--arm-rf`, explicit operator confirmation, a measured/verified attenuated coax chain, actual Heltec revision/FEM metadata, and a non-placeholder firmware profile. `--yes` cannot bypass hardware confirmations. Review [harness/LOCAL_QUICKSTART.md](harness/LOCAL_QUICKSTART.md) before attempting any RF work.
+
+On SX1262, source shift, RSSI attenuation, a paired source-OFF check, and independently verified reference purity are evaluated. An RSSI sweep of absolute RF frequencies **cannot independently validate LO retune**, so that check is not credited as a pass. Frequencies beyond the reference's usable range are UNVERIFIED even if the DUT appears responsive.
+
 ## First steps
 
 1. Read AGENTS.md, docs/SAFETY.md, docs/TEST_PLAN.md, and docs/PLUTO_PROCEDURE.md.

@@ -2,7 +2,7 @@
   "_comment": "SIMULATION ONLY. Example bench values so the sim run fills the dBm columns. These are not measurements; replace every number with your own bench values for a real run.",
   "label": "sx1262-sim",
   "pluto": {"ref_dbm_at_0db_gain": 0.0},
-  "path": {"fixed_atten_db": 40.0, "cable_loss_db": 1.0, "step_atten_db": 0.0, "lowpass_or_bandpass": "sim"},
+  "path": {"fixed_atten_db": 40.0, "filter_loss_db": 0.0, "cable_loss_db": 1.0, "step_atten_db": 0.0, "lowpass_or_bandpass": "sim"},
   "sweep": {"seed": 20261016, "reps": 5},
   "meta": {"board_id": "SIM-BOARD-1", "board_description": "simulated SX1262 board", "operator": "sim"}
 }
