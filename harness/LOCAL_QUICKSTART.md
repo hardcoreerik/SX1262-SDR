@@ -1,63 +1,71 @@
-# Local testing workflow — Heltec V4 SX1262 + Pluto clone
+# Local Quickstart — ONE SX1262-SDR harness
 
-**State at 2026-10-16:** The Python hardware orchestration exists; the **Heltec's own SX1262 firmware adapter does not**. Our harness has demonstrated synthetic end-to-end execution only. The live-ready profile is intentionally marked TODO. No board has been flashed or RF sent by this project.
+The operator's detailed task description is at [../docs/LOCAL_SESSION_GPT_LUNA.md](../docs/LOCAL_SESSION_GPT_LUNA.md). **This repo is host-simulation-ready, not yet live-Heltec-ready.** The placeholder `sx1262_sdr_tbd` refuses to operate real radios by design.
 
-## One test path, two read-only parsers
-- **Use `harness/run_sweep.py`** as the single master runner for source, reference, DUT, safety prompts, repeated sweeps, measurement files and plots.
-- `harness/dut_serial.py` parses SXPROBE-style console output, and the old root `tools/analyze_sweep.py` can **audit previously saved logs offline**, but must not be used as an alternative orchestration pipeline.
-- Existing `harness/rtl_reference.py` covers frequencies your RTL-SDR V4 can actually monitor. **Above its coverage, result stays UNVERIFIED; do not convert into PASS.**
-- `harness/config/dut_profiles.json` still contains `sx1262_sdr_tbd` and **will refuse real hardware** until a new verified ESP32-S3 receive-only firmware exists.
-
-## Phase A — local simulation (no RF, safe to run)
-
-PowerShell (repo root):
+## 0. Update safely on NewcorePC (PowerShell)
 
 ```powershell
+# If the repository already exists on this PC, use its actual directory instead:
+cd <YOUR_SX1262-SDR_REPO_DIRECTORY>
+git status --short
+git branch --show-current
 git fetch origin
-git switch --track origin/chatgpt/unified-test-harness
+git switch main
+git pull --ff-only origin main
+git rev-parse --short HEAD
+```
+
+**Do not literally run the placeholder `cd <...>` line.** If there is no checkout yet, run `git clone https://github.com/hardcoreerik/SX1262-SDR.git`, then `cd SX1262-SDR`. If there are preexisting local changes, do not discard them; create a separate worktree/branch after review. The local AI should work in an `ai/<topic>` branch, not main.
+
+## 1. Host-only dependencies and tests — safe, no physical RF
+
+```powershell
+python --version
 python -m pip install numpy matplotlib pytest
 python -m pytest -q harness/tests
 python -m unittest discover -s tests -v
 python harness/run_sweep.py --sim --config harness/config/sim_example.json --no-plot
 ```
 
-Expected:
-- All offline unit tests green, including new guards for partial PLL failures, source-off negative controls and impossible PASS classifications.
-- A timestamped folder under `harness/results/` with `run.log`, `measurements.csv`, `summary.csv`, `source_check.csv`, `spur_map.csv`, `meta.json`.
-- `SX1262-SDR.log` exists in the **terminal's current working directory**, not just the source directory.
-- Metadata says `simulated: true`. No synthetic PASS is a real RF result.
-- For plots, omit `--no-plot`; matplotlib generates chart output.
+The `--sim` run should generate `harness/results/<timestamp>_*_SIM/` with `meta.json`, `run.log`, `summary.csv`, `measurements.csv`, `spur_map.csv`, and `source_check.csv`. **`SX1262-SDR.log` MUST be saved in the directory the command is run from**; check `Test-Path .\SX1262-SDR.log`. `meta.simulated=true` is mandatory. You may omit `--no-plot` to render charts.
 
-## Phase B — read-only hardware inventory (no TX, no flash)
+**Do not treat the checked-in `harness/sample_output/` images as current test results:** those were produced by Grok's initial simulator before the unification changes.
 
-With physical radios connected, confirm **the devices and exact ports**; earlier Grok notes about COM17/COM39 and Pluto `ip:192.168.2.1` are a snapshot, not a current detection:
+## 2. Read-only local inventory — no flash, no RF output
 
 ```powershell
 python harness/dut_serial.py --list
 python harness/pluto_source.py --detect --uri ip:192.168.2.1
 ```
 
-Before selecting COMx, read Heltec's revision/silkscreen, SX1262 SPI pins, TCXO and external FEM controls from its own schematic. Inspect the actual Pluto-clone TX ports, installed firmware, driver and radio frequency range. Never assume a device is the right board solely from a reused COM number.
+The second command opens a radio backend and requests TX OFF; it is **read-only/disable-intended**, not an RF source test. Verify the correct network/USB device and physical RF state. Historic Grok discoveries (FISH Ball PlutoSDR Rev.A Z7020/AD9361, COM17/COM39, TX 46.875 MHz–6 GHz, RX 70 MHz–6 GHz) must be rediscovered. Do not assume COM17 is Heltec: another project uses it.
 
-## Phase C — hardware RX adapter, then conducted RF only
+Inventory Windows ESP-IDF toolchain, Python, serial VID/PID, specific Heltec board revision, its SX1262 pin connections and FEM (GC1109/KCT8103L or another verified part). Do not overwrite installed versions indiscriminately.
 
-1. Develop the Heltec ESP-IDF RX-only firmware in `firmware/`. Do not flash operational Meshtastic firmware without explicit authorization.
-2. Define its actual console command/response format; add a non-placeholder profile to `harness/config/dut_profiles.json` with literal firmware-source links and a simulator/fixture parser test.
-3. Run a no-Pluto RX-status sweep first. Verify calibration and PLL bit reporting, including failed tune rows.
-4. Assemble a physically inspected, shielded, correctly terminated **Pluto TX -> known RF filter -> verified fixed attenuator(s) -> DUT** path with all TX off. Verify filter insertion loss, cable loss and source power with suitable instruments. If uncalibrated, label input levels relative; do not fill a made-up dBm.
-5. An explicit operator must accept RF arming. The runner refuses real TX without `--arm-rf` plus a manual typed interlock and config specifying Heltec revision, FEM, known source filter, and at least 30 dB actual fixed attenuation. **Do not use this as a substitute for a power budget; physical verification is required.**
-6. Only after all preflight gates pass, use an identified port and verified configuration. Example shape **(not ready today)**:
+## 3. Firmware engineering, NO FLASH until permission
+
+Implement a modular **RX-only ESP-IDF** receiver for the actual Heltec revision and board pins. First support `info`, `probe` and `status` with bounded sweep arguments, explicit SPI/BUSY timeouts, PLL and image-cal errors, state restoration, and honest machine-readable results. Match or explicitly version the existing `sxprobe` format; add a verified profile replacing the TODO in `harness/config/dut_profiles.json` only after matching actual firmware. Compile and run host fixture tests. Save current firmware and partition/NVS metadata if supported. Then ask for **specific user authorization for flashing the identified port**.
+
+## 4. Conducted Pluto testing, SECOND separate permission
+
+The user must inspect a physically isolated and terminated **Pluto RF output -> proper filter -> fixed attenuator(s) -> Heltec SX1262 RF input** path; measure/verify output limits, board FEM input limits, filter losses and cables. A software-interlock minimum of 30 dB fixed attenuation and -20 dB max hardware gain is not, by itself, a certified RF safety budget.
+
+Do not enable Pluto TX or call `harness/run_sweep.py` in hardware mode without the separate explicit authorization, a completed input budget, and operator hand-on verification. Hardware mode requires `--arm-rf` and an exact manual typed confirmation; `--yes` is simulation-only. All experimental off-band work stays **conducted/receive-only** at the Heltec.
+
+Example **for a future validated system only**:
 
 ```powershell
-python harness/run_sweep.py --config .\my_verified_bench.json --profile VERIFIED_HELTEC_RX_PROFILE --port COMXX --arm-rf
+python harness/run_sweep.py --config .\my_verified_bench.json --profile VERIFIED_HELTEC_RX_PROFILE --port COMxx --arm-rf
 ```
 
-7. The radio's RSSI scanner must test source-shift, attenuation response, source-OFF contrast, reference purity. It does not get LO-retune credit. Do not treat PLL lock alone or RSSI alone as real RF reception.
-8. Repeat edge tests near 1.447 / 1.448 GHz and 2.622 / 2.624 GHz on the Heltec, then only cautiously investigate interior gap frequencies. The reported bounds come from a different LilyGO board.
-9. At frequencies outside the RTL-SDR V4's normal receive range, leave results UNVERIFIED until a genuine second RF verification method (characterized Pluto RX path, analyzer, downconverter, etc.) is added and tested. Never declare 2.4 GHz unlocked because the simulator says PASS.
+Never copy/paste that command with the placeholder profile or unidentified COM port.
 
-## Results and troubleshooting
+## 5. Interpret measurements cautiously
 
-`harness/results/` is intentionally not tracked by Git. Preserve raw output, firmware SHA, board identity, exact RF setup, time, uncertainties, source-off pairing and software versions before copying a documented evidence package into the private REA-Results inbox.
+A high-frequency source can't be verified by an RTL-SDR V4 beyond its validated coverage. Report **UNVERIFIED**, not PASS, until a separately proven higher-frequency source reference exists. A PLL lock, an RSSI number, or a simulated PASS does not demonstrate on-channel RF reception. Use source-OFF, source-shift, 10 dB attenuation, at least five randomized repetitions and multiple power/temperature conditions. Record current-directory log and immutable raw session evidence. If equipment identification, filter input-power limit, or source purity cannot be verified, stop after simulation/preflight.
 
-If a test fails or is aborted, verify TX OFF at the radio as well as the console; this is an experimental driver, not a safety-certified RF interlock. The script requests Pluto TX shutdown on all handled exits. If control crashes or USB disconnects, disconnect power as needed and check RF state independently.
+## 6. Handoff
+
+Publish a concise evidence-led `docs/HANDOFF.md` with the actual commands/results and outstanding blockers. Put reusable REA findings in a properly attributed inbox document, leaving RSA's generated archives alone. Work in an `ai/heltec-v4-rx-firmware` or similarly named branch; request review before merging code.
+
+Current hardware status: **zero physical experiments yet in this repository.**

@@ -1,49 +1,74 @@
-# Agent operating contract — SX1262-SDR
+# SX1262-SDR — AGENTS.md
 
-The experiment's owner is Erik; do not assume blanket permission to flash a connected board. This repo is private research, not a validated production device.
+This is the authoritative engineering contract for AI agents working on [hardcoreerik/SX1262-SDR](https://github.com/hardcoreerik/SX1262-SDR).
 
-## Scope
-- Primary device: Heltec WiFi LoRa 32 V4, exact revision to be verified, SX1262 and ESP32-S3.
-- Reference: Pluto-compatible Zynq-7020 + AD9361; capabilities, calibration and actual firmware must be verified.
-- First work: receiver-only commands, RSSI sweeps, reproducible conducted reference-tone tests and capture analysis.
-- No transmissions from SX1262, no unknown-band radiated TX, no destructive eFuse changes, and no PCB modification without explicit user permission.
+## Objective and actual hardware
 
-## Git and integration
-- Develop on chatgpt/sx1262-rx-probe or another ai/topic branch, never directly on main.
-- Use draft PRs for integration; changes can be batched rather than one PR per micro-change.
-- Separate measured facts from hypotheses and simulated/fixture outcomes.
-- Never copy GPL sources without deliberately reviewing license obligations and providing attribution.
+Discover the **true receive and synthesizer limits of the Semtech SX1262 in the Heltec WiFi LoRa 32 V4 (ESP32-S3)**. Replicate or disprove published out-of-spec tuning windows and the reported PLL unlock gap around 1448–2622 MHz using error/status evidence and independently controlled conducted RF.
 
-## Authoritative execution harness
+User-provided instruments: a **Pluto-compatible Zynq-7020/AD9361 clone** as low-power cabled source and possible high-band reference RX, plus an RTL-SDR V4 where its own tuning range permits. Discover ports and device identification afresh; values in previous reports, such as COM17, COM39, ip:192.168.2.1, are HISTORICAL, not authoritative for the current session.
 
-- Use `harness/run_sweep.py` for simulator, source/DUT orchestration and future on-device measurements.
-- The root `tools/analyze_sweep.py` is a read-only compatibility parser, not a competing hardware runner.
-- Keep the real-device DUT profile disabled until firmware and pin map are validated.
-- Never turn an RSSI step sweep into an IQ claim or treat the swept-centre offset as an independent LO-retune check.
-- Require a paired transmitter-OFF control for every frequency/repetition.
-- No real TX without `--arm-rf`, operator interlock, measured adequate attenuation and known board FEM revision.
+**Read `docs/LOCAL_SESSION_GPT_LUNA.md` and `harness/LOCAL_QUICKSTART.md` first when operating locally.**
 
-## Repeatable test evidence
-- Save one log file named SX1262-SDR.log in the **process current working directory**, regardless of script location.
-- Store raw session logs with timestamp, firmware commit, silicon identity, board revision, TCXO and antenna path, calibration mode, frequency, errors/status, RSSI, ambient/test setup, and source-on/off.
-- Never overwrite evidence. Use atomic writes where possible; hash received artifacts.
-- A valid receiver-range result requires controlled source-on/off and known RF tone/frequency tracking, not merely a tuning register or RSSI.
-- Differentiate synthesizer lock, RX ADC availability (if any), RSSI-only observation, packet decode, external signal confirmation.
-- Reproduce each threshold measurement at least twice before promotion to an evidenced result.
+## One fluid test harness — no competing frameworks
 
-## Build gates
-- Run host unit tests before committing.
-- Build ESP-IDF only if it is installed; declare what could not run.
-- Verify target pins and crystal/TCXO before a flash.
-- Test the Heltec without changing operational Meshtastic images until user approves.
-- Tests must run offline using only Python standard library unless new dependencies have a compelling reason.
+1. **`harness/run_sweep.py` is the single orchestration program** for simulated and eventually real RF bench runs.
+2. `harness/pluto_source.py`: cabled source controller, normally TX OFF.
+3. `harness/rtl_reference.py`: limited-band independent source validation. Outside verified RTL capability, status is UNVERIFIED unless a new independently tested reference adapter exists.
+4. `harness/dut_serial.py` and `harness/config/dut_profiles.json`: hardware-specific serial protocol. The placeholder `sx1262_sdr_tbd` deliberately **refuses live operation**. Do not disable this protection just to run a sweep.
+5. `harness/sim.py`, `harness/tests/`: simulator and regression testing; NEVER publish simulated values as hardware results.
+6. `tools/analyze_sweep.py` / `src/sx1262_sdr/analysis.py`: **offline import and auditing only**, not another live harness.
+7. `firmware/`: eventual board-specific, RX-only ESP-IDF adapter. Not currently flashable.
 
-## REA-Results
-- Read private repo hardcoreerik/REA-Results/AGENTS.md and relevant indexed findings.
-- Do not hand-edit generated targets, comparisons or indexes.
-- New externally generated research belongs under inbox/YYYY-MM-DD_sx1262_gap.md with source links and caveats, then feeds the local RSA publisher.
+Preserve Grok's good harness architecture, no rewrite, no second runner, no desktop UI until requested. Extend shared data schemas rather than creating competing output formats.
 
-## Operational safety
-- RF source must remain disabled until a physically reviewed conducted path with appropriate fixed attenuators, DC block (if required), and verified source power is present.
-- Never assume a clone of the Pluto has the same output specs or calibration as the branded unit.
-- Do not suggest radiating test carriers in unauthorized bands.
+## What is proven versus conjecture
+
+- External experiments on a **different LilyGO board** reported PLL lock bands near 37–1447 and 2624–3494 MHz. These are not verified on the user's Heltec.
+- **PLL register acceptance != PLL lock != non-null RSSI != source-correlated reception != calibrated sensitivity.**
+- SX1262 is an RSSI/packet modem, not currently a demonstrated raw I/Q source; do not import LR2021 IQ semantics.
+- An RSSI scan walks **absolute RF frequencies**; moving a nominal centre without independent physical LO evidence does not validate a real receiver retune. Require TX source shift, attenuation trend, source-OFF control, valid PLL status, and independent reference verification.
+- A Pluto clone's reported tuning range does NOT mean calibrated power, spectral purity, or independent reference evidence across it.
+
+## Authorization and RF safety — non-negotiable
+
+- Local session MAY inspect checked-out source, inventory USB/serial, query device properties, run simulations, build firmware and analyze logs **without changing equipment**.
+- Local session MUST ask the user for explicit approval **before first flashing or erasing the named, positively identified Heltec board**. Protect Meshtastic/NVS/partitions; back up what is recoverable, provide rollback and recognize when no safe backup is possible.
+- Local session MUST separately request explicit user confirmation before **enabling the Pluto's RF output** after a physically validated conducted cable/filter/attenuator/DC-block setup. Operator must inspect cabling and safe input levels. A chat authorization does not substitute for physical verification.
+- No SX1262 TX commands, PA experiments, unauthorized over-the-air emissions, destructive eFuse writes, or undocumented writes of uncertain electrical consequence. Use receive-only command allowlists and bounds.
+- No live bypass of `--arm-rf`, the typed interlock, mandatory attenuation, known board revision/FEM, or TODO-profile gating. `--yes` is simulation-only.
+- Do not assume that an attenuator's declared dB value certifies safe input; measure/verify the clone's output and every FEM's maximum allowable level as actually installed. On communications failure, stop and independently confirm RF output is OFF.
+
+## Tests, provenance, data integrity
+
+From repository root:
+
+```powershell
+python -m pip install numpy matplotlib pytest
+python -m pytest -q harness/tests
+python -m unittest discover -s tests -v
+python harness/run_sweep.py --sim --config harness/config/sim_example.json --no-plot
+```
+
+Run data goes to `harness/results/<run-id>/`, not Git by default. **Append `SX1262-SDR.log` in the process current working directory** for each runner/analysis operation. Preserve raw serial logs and source commands. Do not silently overwrite measured artifacts. Results must include board revision/FEM mode, firmware commit, Pluto build, timestamp, source on/off, signal-path insertion loss, calibration basis, threshold and negative controls. Add SHA-256 hashes for copied evidence artifacts.
+
+Evidence labels: `SIMULATED`, `UNVERIFIED`, `COMMAND_ACCEPTED`, `PLL_LOCKED`, `RSSI_OBSERVED`, `EXTERNAL_TONE_CORRELATED`, `FREQUENCY_TRACKED`, `CALIBRATED`. Never collapse these.
+
+Require Linux CI green and local Windows tests passing before code is considered test-ready. Build and validate exact firmware target before proposing flash. Every milestone must state commands executed, return codes, test counts, evidence, and limitations.
+
+## Collaborative development
+
+- Work on a single cohesive `ai/<topic>` branch from `main`. Never make routine commits to main.
+- When user approves a merge, merge after CI succeeds, then verify remote main and update the handoff.
+- Prefer a coherent PR for the milestone over PRs for each small change.
+- Preserve license/attribution for GPL-3.0 harness components and any copied upstream code; audit licensing before reuse. Do not commit credentials, device identifiers, secrets, massive raw captures or proprietary vendor firmware blobs.
+
+## REA / RSA handoff
+
+Consult private `hardcoreerik/REA-Results`, especially its `AGENTS.md` and `INDEX.md`. The RSA-Sandbox is **local-only**; do not push it. New findings belong in a dated `REA-Results/inbox/` note with source commits, raw evidence paths, hashes and limitations. Do **not** manually edit generated `targets/`, `comparisons/`, `index.json` or `graph.json` in REA-Results; local RSA publisher owns these.
+
+## Hard stop / escalation conditions
+
+Unidentified serial port; ambiguous Heltec revision/pin mapping; unverified TCXO or RF switch voltage; inability to preserve operational firmware before flash; missing RF filter or input-level budget; evidence of emitted RF without authorization; inconsistent PLL status; source-on/off uncorrelated; simulator falsely labeled as real; missing log file; CI regression. Stop the affected stage, protect hardware, document blocker, then seek the specific missing confirmation.
+
+This file controls all local-session engineering decisions. See `docs/LOCAL_SESSION_GPT_LUNA.md` for execution order.

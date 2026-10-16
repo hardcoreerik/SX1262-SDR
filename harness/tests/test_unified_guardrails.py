@@ -63,3 +63,25 @@ def test_simulation_never_claims_hardware_evidence(tmp_path, monkeypatch):
     meta = json.loads((dirs[0] / "meta.json").read_text())
     assert meta["simulated"] is True
     assert meta["verdicts"]["868.000"] == "UNVERIFIED"
+
+
+
+def test_live_placeholder_fails_before_opening_pluto(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    config = run_sweep.load_config()
+    calls = []
+    def no_pluto(*args, **kwargs):
+        calls.append(True)
+        raise AssertionError("Pluto must never be opened for TODO firmware")
+    monkeypatch.setattr(run_sweep, "PlutoSource", no_pluto)
+    with __import__("pytest").raises(RuntimeError, match="TODO"):
+        run_sweep.Runner(config, sim=False, out_root=str(tmp_path / "runs"))
+    assert calls == []
+
+
+def test_live_requires_explicit_rf_arming(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    called = []
+    monkeypatch.setattr(run_sweep, "Runner", lambda *a, **kw: called.append(True))
+    assert run_sweep.main(["--no-plot"]) == 2
+    assert not called

@@ -168,6 +168,11 @@ class Runner:
         self._cwd_logf = open(os.path.join(os.getcwd(), "SX1262-SDR.log"), "a", encoding="utf-8")
         self.warnings = []
         prof = load_profiles()[cfg["dut"]["profile"]]
+        # Reject a placeholder before opening a real Pluto RF backend.
+        if not sim and prof.get("todo"):
+            self._logf.close()
+            self._cwd_logf.close()
+            raise RuntimeError("Heltec receiver profile is a TODO; no Pluto access is permitted")
         self.bench = None
         if sim:
             from sim import SimBench
@@ -193,8 +198,17 @@ class Runner:
             except Exception as e:  # noqa: BLE001
                 self.warn("RTL reference unavailable (%s): rtl_clean will be UNVERIFIED" % e)
         dc = cfg["dut"]
-        self.dut = Dut(dc["profile"], dc["port"], dc["serial_number"], self.bench, overrides=dc["overrides"],
-                       log=self.log_raw)
+        try:
+            self.dut = Dut(dc["profile"], dc["port"], dc["serial_number"], self.bench,
+                           overrides=dc["overrides"], log=self.log_raw)
+        except BaseException:
+            # If __init__ raises, main() has no fully constructed Runner to close.
+            self.src.disable()
+            if self.rtl:
+                self.rtl.close()
+            self._logf.close()
+            self._cwd_logf.close()
+            raise
         d = self.dut.params
         # RSSI sweeps do NOT independently test LO retuning: a shifted nominal
         # centre with the same absolute scan steps produces a tautological offset.

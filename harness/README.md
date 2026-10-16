@@ -10,8 +10,8 @@ section 8 of the REA deep dive (the lessons are summarised in [`TESTING-NOTES.md
 `research/sx1262-range/README.md` of SAMS0N1TE/lr2021-sdr. That study used one board, no external signal, a single
 pass and no threshold for "works".
 
-It is ready to drop into the new SX1262-SDR repo. All board-specific command text lives in
-`config/dut_profiles.json`, so a new firmware only needs a new profile there.
+This is now the integrated SX1262-SDR bench harness. All board-specific command text lives in
+`config/dut_profiles.json`; the Heltec requires its own compatible firmware, tested parser, and verified profile **before live operation**.
 
 > Status: tested end to end **in simulation only** (see "Sample output"). Not yet run against real hardware.
 
