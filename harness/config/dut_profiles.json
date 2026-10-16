@@ -1,0 +1,147 @@
+{
+  "_comment": "DUT console command table. Edit here when the SX1262-SDR repo's firmware commands are known; dut_serial.py has no command text of its own. Paths are relative to the lr2021-sdr (SDR:) and LakeShark (LS:) source trees analysed in the sandbox (commits 9706241b and 8586c6de). Command formats were read from GPL-3.0 code by SAMS0N1TE (lr2021-sdr, LakeShark); see ../TESTING-NOTES.md and the per-profile 'source' lists.",
+  "lakeshark_sx1262": {
+    "chip": "SX1262",
+    "kind": "rssi_sweep",
+    "status": "verified against source",
+    "baud": 115200,
+    "freq_min_hz": 1000000,
+    "freq_max_hz": 4095000000,
+    "defaults": {
+      "bw": 4800,
+      "gain": "boost",
+      "reads": 8,
+      "settle_us": 2000,
+      "cal": "once",
+      "span_hz": 50000,
+      "step_hz": 1000
+    },
+    "commands": {
+      "probe": {
+        "template": "lora sxprobe {start_khz} {stop_khz} {step_khz} {bw} {gain} {reads} {settle_us} {cal}",
+        "done_regex": "^(sxprobe: end .*|usage: lora sxprobe.*|sxprobe: (no SX126x answering|no memory|the radio is busy.*|this board has no SX126x))$",
+        "timeout_s": 10,
+        "timeout_per_point_s": 0.03,
+        "parser": "sxprobe",
+        "max_points": 2001
+      },
+      "info": null
+    },
+    "source": [
+      "LS:components/lakeshark/board/ls_lora_sx126x.c:1105-1143 argument parsing and usage text",
+      "LS:components/lakeshark/board/ls_lora_sx126x.c:1047-1093 per-step: optional CalibrateImage, tune, SetRx, GetDeviceErrors, GetRssiInst reads",
+      "LS:components/lakeshark/board/ls_lora_sx126x.c:1230-1251 output: 'sxprobe:' header, 'sxp,khz,err_cal,err_rx,st_cal,st_rx,n,avg_dbm,max_dbm,min_dbm,us' rows, 'sxprobe: end restore=... rx=...'",
+      "LS:components/lakeshark/board/ls_lora_sx126x.c:1023-1028 raw RSSI: dBm = -raw/2",
+      "SDR:research/sx1262-range/README.md:196 documented syntax"
+    ]
+  },
+  "lakeshark_lr2021": {
+    "chip": "LR2021",
+    "kind": "iq_peaks",
+    "status": "verified against source",
+    "baud": 115200,
+    "freq_min_hz": 30000000,
+    "freq_max_hz": 3800000000,
+    "defaults": {
+      "bw": 31250,
+      "gain": 9,
+      "boost": -1,
+      "path": "auto",
+      "ms": 40
+    },
+    "_gain_note": "gain must be a fixed step 0..13 for the 10 dB attenuation check; 14 = host AGC (LS:ls_lora_lr20xx.c:4186) would hide the step",
+    "commands": {
+      "probe": {
+        "template": "lora lrprobe {khz} {bw} {gain} {boost} {path} {ms}",
+        "done_regex": "^(lrprobe-spec: .*|lrprobe: .* bytes=0 .*|usage: lora lrprobe.*|lrprobe: no capture memory|lrprobe: too few samples for analysis)$",
+        "timeout_s": 8,
+        "parser": "lrprobe"
+      },
+      "info": null
+    },
+    "source": [
+      "LS:components/lakeshark/board/ls_lora_lr20xx.c:4177-4199 argument parsing and usage text (kHz 30000..3800000, bw 31250|62500|125000|250000, gain 0..13 or 14 auto, boost -1..7, lf|hf|auto, ms 1..250, hex)",
+      "LS:components/lakeshark/board/ls_lora_lr20xx.c:4238-4244 'lrprobe: f=... tune=... errors=0x.... bytes=... result=... recovery=...'",
+      "LS:components/lakeshark/board/ls_lora_lr20xx.c:4122-4175 'lrprobe-spec: rate= segs= dc= rms= (dBFS) floor= dB pk1=+HzHz:+dB pk2 pk3' (1024-bin Hann average, floor = median bin, bins <3 from DC skipped)",
+      "SDR:research/rx-range-and-gain/tools/lrprobe.py:21-22 115200 baud, DTR/RTS low so the board is not reset",
+      "SDR:research/rx-range-and-gain/README.md:217 documented syntax"
+    ]
+  },
+  "lr2021_sdr_standalone": {
+    "chip": "LR2021",
+    "kind": "iq_dump",
+    "status": "verified against source; rate fixed at 125000 (BW 31.25 kHz); chip AGC left on, so the attenuation check may read short",
+    "baud": 115200,
+    "freq_min_hz": 150000000,
+    "freq_max_hz": 960000000,
+    "defaults": {
+      "ms": 100,
+      "rate": 125000
+    },
+    "commands": {
+      "tune": {
+        "template": "tune {hz}",
+        "done_regex": "^(tune: \\d+ Hz result=-?\\d+|usage: tune.*)$",
+        "timeout_s": 3,
+        "parser": "kv"
+      },
+      "capture": {
+        "template": "capture {ms}",
+        "done_regex": "^(check: .* result=(PASS|FAIL)|usage: capture.*|radio initialization failed.*|internal RAM allocation failed)$",
+        "timeout_s": 5,
+        "parser": "kv"
+      },
+      "dump": {
+        "template": "dump",
+        "done_regex": "^(lrfifo: bytes=.*|run a successful capture first)$",
+        "timeout_s": 20,
+        "parser": "lrfifo_dump"
+      },
+      "info": {
+        "template": "info",
+        "done_regex": "^LR2021 ROM .*$",
+        "timeout_s": 2,
+        "parser": "info"
+      }
+    },
+    "source": [
+      "SDR:firmware/esp32p4/main/main.c:91-102 tune <150000000..960000000 Hz> -> 'tune: <hz> Hz result=<e>'",
+      "SDR:firmware/esp32p4/main/main.c:44-66 capture [1..100 ms] -> 'check: accepted=... result=PASS|FAIL'",
+      "SDR:firmware/esp32p4/main/main.c:76-90 dump -> 'lrfifo-hex: <off> <hex>' lines, 'lrfifo-crc32: XXXXXXXX bytes=N encoding=iq16le', then 'lrfifo: bytes=...'",
+      "SDR:firmware/esp32p4/main/radio.c:225-233 info -> 'LR2021 ROM a.b frequency=... bandwidth=31250 configured=... errors=XXXX'"
+    ]
+  },
+  "sx1262_sdr_tbd": {
+    "chip": "SX1262",
+    "kind": "rssi_sweep",
+    "todo": true,
+    "status": "TODO: hardcoreerik/SX1262-SDR has no firmware yet (main @ f0038cd holds only README.md). Fill in template/done_regex/parser from the Heltec WiFi LoRa 32 V4 firmware's console once it exists. Until then this profile runs only in --sim (it borrows the LakeShark sxprobe syntax as a stand-in).",
+    "board": "Heltec WiFi LoRa 32 V4 (SX1262 + external FEM; record revision and FEM mode in meta)",
+    "baud": 115200,
+    "freq_min_hz": 1000000,
+    "freq_max_hz": 4095000000,
+    "defaults": {
+      "bw": 4800,
+      "gain": "boost",
+      "reads": 8,
+      "settle_us": 2000,
+      "cal": "once",
+      "span_hz": 50000,
+      "step_hz": 1000
+    },
+    "commands": {
+      "probe": {
+        "template": "TODO-sxprobe {start_khz} {stop_khz} {step_khz} {bw} {gain} {reads} {settle_us} {cal}",
+        "done_regex": "^(sxprobe: end .*|usage: .*)$",
+        "timeout_s": 10,
+        "timeout_per_point_s": 0.03,
+        "parser": "sxprobe",
+        "max_points": 2001
+      },
+      "info": null
+    },
+    "source": [
+      "placeholder; see lakeshark_sx1262 for the reference command this stands in for"
+    ]
+  }
+}

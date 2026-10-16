@@ -1,0 +1,426 @@
+{
+  "run_id": "20261016-134931_heltec-v4-sim_SIM",
+  "simulated": true,
+  "started": "2026-10-16T13:49:31-07:00",
+  "finished": "2026-10-16T13:49:31-07:00",
+  "seed": 20261016,
+  "order": [
+    [
+      1,
+      868000000.0
+    ],
+    [
+      5,
+      2700000000.0
+    ],
+    [
+      5,
+      3000000000.0
+    ],
+    [
+      2,
+      868000000.0
+    ],
+    [
+      5,
+      600000000.0
+    ],
+    [
+      5,
+      1300000000.0
+    ],
+    [
+      1,
+      1000000000.0
+    ],
+    [
+      3,
+      868000000.0
+    ],
+    [
+      1,
+      1300000000.0
+    ],
+    [
+      4,
+      600000000.0
+    ],
+    [
+      2,
+      1447000000.0
+    ],
+    [
+      3,
+      600000000.0
+    ],
+    [
+      1,
+      2450000000.0
+    ],
+    [
+      4,
+      2700000000.0
+    ],
+    [
+      1,
+      3000000000.0
+    ],
+    [
+      4,
+      1000000000.0
+    ],
+    [
+      2,
+      915000000.0
+    ],
+    [
+      4,
+      3000000000.0
+    ],
+    [
+      2,
+      1300000000.0
+    ],
+    [
+      2,
+      3000000000.0
+    ],
+    [
+      1,
+      433920000.0
+    ],
+    [
+      1,
+      600000000.0
+    ],
+    [
+      5,
+      1000000000.0
+    ],
+    [
+      5,
+      433920000.0
+    ],
+    [
+      3,
+      2450000000.0
+    ],
+    [
+      3,
+      3000000000.0
+    ],
+    [
+      4,
+      433920000.0
+    ],
+    [
+      3,
+      433920000.0
+    ],
+    [
+      3,
+      1300000000.0
+    ],
+    [
+      3,
+      1000000000.0
+    ],
+    [
+      3,
+      915000000.0
+    ],
+    [
+      2,
+      433920000.0
+    ],
+    [
+      1,
+      915000000.0
+    ],
+    [
+      2,
+      2450000000.0
+    ],
+    [
+      4,
+      1447000000.0
+    ],
+    [
+      2,
+      1000000000.0
+    ],
+    [
+      4,
+      915000000.0
+    ],
+    [
+      4,
+      2450000000.0
+    ],
+    [
+      1,
+      1447000000.0
+    ],
+    [
+      2,
+      600000000.0
+    ],
+    [
+      3,
+      2700000000.0
+    ],
+    [
+      2,
+      2700000000.0
+    ],
+    [
+      5,
+      2450000000.0
+    ],
+    [
+      3,
+      1447000000.0
+    ],
+    [
+      5,
+      915000000.0
+    ],
+    [
+      5,
+      868000000.0
+    ],
+    [
+      4,
+      868000000.0
+    ],
+    [
+      4,
+      1300000000.0
+    ],
+    [
+      5,
+      1447000000.0
+    ],
+    [
+      1,
+      2700000000.0
+    ]
+  ],
+  "skipped": [
+    {
+      "freq_hz": 169400000.0,
+      "reason": "outside detected Pluto TX range (325000000, 1, 3800000000)"
+    },
+    {
+      "freq_hz": 315000000.0,
+      "reason": "outside detected Pluto TX range (325000000, 1, 3800000000)"
+    }
+  ],
+  "meta": {
+    "board_id": "SIM-BOARD-1",
+    "board_model": "Heltec WiFi LoRa 32 V4",
+    "board_revision": null,
+    "fem_part": null,
+    "fem_mode": null,
+    "_fem_note": "V4 boards put an external FEM (GC1109 or KCT8103L by revision, per third-party docs) in front of the SX1262; record which part and whether RX runs in LNA or bypass mode, as it changes gain, noise figure, band limits and the safe input level",
+    "chip": "SX1262",
+    "chip_rom_version": null,
+    "firmware_repo": null,
+    "firmware_commit": "sim",
+    "antenna_port": "SMA / u.FL (describe)",
+    "temperature_c_start": 22.0,
+    "temperature_c_end": 22.5,
+    "operator": "sim",
+    "notes": "",
+    "board_description": "simulated SX1262 board"
+  },
+  "path": {
+    "fixed_atten_db": 40.0,
+    "lowpass_or_bandpass": "sim",
+    "cable_loss_db": 1.0,
+    "splitter_loss_db": null,
+    "step_atten_db": 0.0,
+    "_note": "total loss Pluto->DUT = fixed + filter/cable + splitter + step. Enter measured values; null stays null in the output"
+  },
+  "total_loss_db": 41.0,
+  "pluto": {
+    "uri": "ip:192.168.2.1",
+    "backend": "sim",
+    "range_hz": [
+      325000000,
+      1,
+      3800000000
+    ],
+    "bb_offset_hz": 1000000,
+    "info": {
+      "hw_model": "SIMULATED Pluto",
+      "fw_version": "sim",
+      "backend": "sim"
+    }
+  },
+  "rtl": {
+    "backend": "sim",
+    "note": ""
+  },
+  "dut": {
+    "profile": "sx1262_sdr_tbd",
+    "chip": "SX1262",
+    "kind": "rssi_sweep",
+    "port": "SIM",
+    "params": {
+      "bw": 4800,
+      "gain": "boost",
+      "reads": 8,
+      "settle_us": 2000,
+      "cal": "once",
+      "span_hz": 50000,
+      "step_hz": 1000
+    },
+    "info": {
+      "ok": false,
+      "note": "profile has no info command; enter chip/ROM/firmware by hand"
+    },
+    "profile_sources": [
+      "placeholder; see lakeshark_sx1262 for the reference command this stands in for"
+    ]
+  },
+  "derived": {
+    "offset_tol_hz": 1500.0,
+    "rbw_hz": 1000
+  },
+  "harness_commit": "f0038cd911f2736735f0546e6e54aaecded20fd1",
+  "python": "3.14.3",
+  "host": "NewcorePC",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "warnings": [
+    "skip 169.400 MHz: outside detected Pluto TX range (325000000, 1, 3800000000)",
+    "skip 315.000 MHz: outside detected Pluto TX range (325000000, 1, 3800000000)"
+  ],
+  "config": {
+    "_comment": "SIMULATION ONLY. Example bench values so the sim run fills the dBm columns. These are not measurements; replace every number with your own bench values for a real run.",
+    "label": "heltec-v4-sim",
+    "dut": {
+      "profile": "sx1262_sdr_tbd",
+      "port": null,
+      "serial_number": null,
+      "overrides": {}
+    },
+    "pluto": {
+      "uri": "ip:192.168.2.1",
+      "backend": "auto",
+      "bb_offset_hz": 1000000,
+      "dds_invert_q": false,
+      "tx_gain_db": -40.0,
+      "max_gain_db": -20.0,
+      "min_fixed_atten_db": 30.0,
+      "ref_dbm_at_0db_gain": 0.0,
+      "_ref_note": "Pluto output power at hardwaregain 0 dB, measured with a power meter or a trusted analyser (per frequency if possible). null = report relative dB only, no dBm."
+    },
+    "rtl": {
+      "enabled": true,
+      "backend": "auto",
+      "gain_db": 20.0,
+      "ppm": 0,
+      "range_hz": [
+        24000000,
+        1766000000
+      ],
+      "_range_note": "typical R820T/R828D tuner range; set the range your dongle actually tunes",
+      "rbw_hz": 1000,
+      "path": "swap",
+      "_path_note": "swap = move the cable from DUT to RTL when prompted; splitter = both connected through a splitter (enter its loss below)",
+      "spur_dbc_max": -30.0,
+      "harmonic_linearity": true,
+      "check_tx_gain_db": -30.0,
+      "_check_gain_note": "Pluto gain used for the RTL source check: high enough that spurs at spur_dbc_max sit above the RTL floor, never above pluto.max_gain_db"
+    },
+    "path": {
+      "fixed_atten_db": 40.0,
+      "lowpass_or_bandpass": "sim",
+      "cable_loss_db": 1.0,
+      "splitter_loss_db": null,
+      "step_atten_db": 0.0,
+      "_note": "total loss Pluto->DUT = fixed + filter/cable + splitter + step. Enter measured values; null stays null in the output"
+    },
+    "sweep": {
+      "frequencies_mhz": [
+        169.4,
+        315.0,
+        433.92,
+        600.0,
+        868.0,
+        915.0,
+        1000.0,
+        1300.0,
+        1447.0,
+        2450.0,
+        2700.0,
+        3000.0
+      ],
+      "reps": 5,
+      "seed": 20261016,
+      "delta_hz": 20000,
+      "shift_hz": 5000,
+      "retune_hz": 4000,
+      "atten_step_db": 10.0,
+      "ppm_window": 10.0,
+      "offset_tol_hz": null,
+      "spur_threshold_db": 10.0,
+      "settle_s": 0.05,
+      "mds": {
+        "enabled": true,
+        "coarse_step_db": 5.0,
+        "fine_step_db": 1.0
+      },
+      "imd": {
+        "enabled": false,
+        "tone_spacing_hz": 4000
+      },
+      "terminated_spur_map": true
+    },
+    "pass": {
+      "snr_min_db": 10.0,
+      "require_checks": [
+        "source_shift",
+        "retune",
+        "atten_10db",
+        "rtl_clean"
+      ],
+      "atten_tol_db": 2.0,
+      "level_tol_db": 3.0,
+      "fail_on_spur_conflict": true,
+      "unverified_rtl_counts_as": "unverified",
+      "freq_pass_fraction": 0.8
+    },
+    "meta": {
+      "board_id": "SIM-BOARD-1",
+      "board_model": "Heltec WiFi LoRa 32 V4",
+      "board_revision": null,
+      "fem_part": null,
+      "fem_mode": null,
+      "_fem_note": "V4 boards put an external FEM (GC1109 or KCT8103L by revision, per third-party docs) in front of the SX1262; record which part and whether RX runs in LNA or bypass mode, as it changes gain, noise figure, band limits and the safe input level",
+      "chip": "SX1262",
+      "chip_rom_version": null,
+      "firmware_repo": null,
+      "firmware_commit": "sim",
+      "antenna_port": "SMA / u.FL (describe)",
+      "temperature_c_start": 22.0,
+      "temperature_c_end": 22.5,
+      "operator": "sim",
+      "notes": "",
+      "board_description": "simulated SX1262 board"
+    }
+  },
+  "verdicts": {
+    "433.920": "FAIL",
+    "600.000": "PASS",
+    "868.000": "PASS",
+    "915.000": "PASS",
+    "1000.000": "PASS",
+    "1300.000": "FAIL",
+    "1447.000": "PASS",
+    "2450.000": "FAIL",
+    "2700.000": "UNVERIFIED",
+    "3000.000": "UNVERIFIED"
+  }
+}
