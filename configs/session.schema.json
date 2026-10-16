@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SX1262-SDR Evidence Session",
+  "type": "object",
+  "required": [
+    "session_id",
+    "timestamp_utc",
+    "data_origin",
+    "device_board",
+    "sx1262_chip",
+    "firmware_commit",
+    "rf_path",
+    "measurements"
+  ],
+  "properties": {
+    "session_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "timestamp_utc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "data_origin": {
+      "enum": [
+        "synthetic",
+        "live_device",
+        "imported_report",
+        "unverified"
+      ]
+    },
+    "device_board": {
+      "type": "string"
+    },
+    "board_revision": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "sx1262_chip": {
+      "type": "string"
+    },
+    "firmware_commit": {
+      "type": "string"
+    },
+    "rf_path": {
+      "type": "string"
+    },
+    "antenna_or_connector": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "tcxo_hz": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "attenuation_db": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "pluto_firmware": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "pluto_tx_level_dbm": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "rf_source_off_control": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "scope_notes": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "measurements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "frequency_hz",
+          "pll_lock_error",
+          "rssi_dbm"
+        ],
+        "properties": {
+          "frequency_hz": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "pll_lock_error": {
+            "type": "boolean"
+          },
+          "image_cal_error": {
+            "type": "boolean"
+          },
+          "rssi_dbm": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "expected_tone_offset_hz": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "observed_offset_hz": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "source_on": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "notes": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}
