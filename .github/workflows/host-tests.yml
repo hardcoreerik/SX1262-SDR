@@ -1,0 +1,23 @@
+name: Host-only SX1262 research tests
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  offline-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run synthetic parser unit tests
+        run: python -m unittest discover -s tests -v
+      - name: Run offline fixture analysis
+        run: |
+          python tools/analyze_sweep.py examples/synthetic_sxp.csv --out results/synthetic_ci.json --origin synthetic
+          test -s SX1262-SDR.log
+          python -c "import json; d=json.load(open('results/synthetic_ci.json')); assert d['data_points']==9; assert d['status_counts']['rx_pll_error']==5; assert d['rf_reception_proven'] is False"
