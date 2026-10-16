@@ -1,0 +1,114 @@
+{
+  "_comment": "Bench sweep configuration. Copy and edit per run (python run_sweep.py --config my.json). Numbers marked TODO must be measured on your bench; the harness never assumes them.",
+  "label": "heltec-v4-sx1262",
+  "dut": {
+    "profile": "sx1262_sdr_tbd",
+    "port": null,
+    "serial_number": null,
+    "overrides": {}
+  },
+  "pluto": {
+    "uri": "ip:192.168.2.1",
+    "backend": "auto",
+    "bb_offset_hz": 1000000,
+    "dds_invert_q": false,
+    "tx_gain_db": -40.0,
+    "max_gain_db": -20.0,
+    "min_fixed_atten_db": 30.0,
+    "ref_dbm_at_0db_gain": null,
+    "_ref_note": "Pluto output power at hardwaregain 0 dB, measured with a power meter or a trusted analyser (per frequency if possible). null = report relative dB only, no dBm."
+  },
+  "rtl": {
+    "enabled": true,
+    "backend": "auto",
+    "gain_db": 20.0,
+    "ppm": 0,
+    "range_hz": [
+      24000000,
+      1766000000
+    ],
+    "_range_note": "typical R820T/R828D tuner range; set the range your dongle actually tunes",
+    "rbw_hz": 1000,
+    "path": "swap",
+    "_path_note": "swap = move the cable from DUT to RTL when prompted; splitter = both connected through a splitter (enter its loss below)",
+    "spur_dbc_max": -30.0,
+    "harmonic_linearity": true,
+    "check_tx_gain_db": -30.0,
+    "_check_gain_note": "Pluto gain used for the RTL source check: high enough that spurs at spur_dbc_max sit above the RTL floor, never above pluto.max_gain_db"
+  },
+  "path": {
+    "fixed_atten_db": null,
+    "lowpass_or_bandpass": "TODO: part number and passband",
+    "cable_loss_db": null,
+    "splitter_loss_db": null,
+    "step_atten_db": 0.0,
+    "_note": "total loss Pluto->DUT = fixed + filter/cable + splitter + step. Enter measured values; null stays null in the output"
+  },
+  "sweep": {
+    "frequencies_mhz": [
+      169.4,
+      315.0,
+      433.92,
+      600.0,
+      868.0,
+      915.0,
+      1000.0,
+      1300.0,
+      1447.0,
+      2450.0,
+      2700.0,
+      3000.0
+    ],
+    "reps": 5,
+    "seed": null,
+    "delta_hz": 20000,
+    "shift_hz": 5000,
+    "retune_hz": 4000,
+    "atten_step_db": 10.0,
+    "ppm_window": 10.0,
+    "offset_tol_hz": null,
+    "spur_threshold_db": 10.0,
+    "settle_s": 0.05,
+    "mds": {
+      "enabled": true,
+      "coarse_step_db": 5.0,
+      "fine_step_db": 1.0
+    },
+    "imd": {
+      "enabled": false,
+      "tone_spacing_hz": 4000
+    },
+    "terminated_spur_map": true
+  },
+  "pass": {
+    "snr_min_db": 10.0,
+    "require_checks": [
+      "source_shift",
+      "retune",
+      "atten_10db",
+      "rtl_clean"
+    ],
+    "atten_tol_db": 2.0,
+    "level_tol_db": 3.0,
+    "fail_on_spur_conflict": true,
+    "unverified_rtl_counts_as": "unverified",
+    "freq_pass_fraction": 0.8
+  },
+  "meta": {
+    "board_id": null,
+    "board_model": "Heltec WiFi LoRa 32 V4",
+    "board_revision": null,
+    "fem_part": null,
+    "fem_mode": null,
+    "_fem_note": "V4 boards put an external FEM (GC1109 or KCT8103L by revision, per third-party docs) in front of the SX1262; record which part and whether RX runs in LNA or bypass mode, as it changes gain, noise figure, band limits and the safe input level",
+    "chip": null,
+    "chip_rom_version": null,
+    "firmware_repo": null,
+    "firmware_commit": null,
+    "antenna_port": "SMA / u.FL (describe)",
+    "temperature_c_start": null,
+    "temperature_c_end": null,
+    "operator": null,
+    "notes": ""
+  }
+}

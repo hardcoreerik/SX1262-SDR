@@ -1,0 +1,8 @@
+# Harness runtime. Simulator needs only numpy (+ matplotlib for plots).
+numpy
+matplotlib
+pyserial          # DUT console
+pylibiio          # Pluto via libiio (needs the libiio system library)
+pyadi-iio         # optional: preferred Pluto backend; falls back to pylibiio
+pyrtlsdr          # optional: RTL reference; falls back to the rtl_power command
+pytest            # tests
