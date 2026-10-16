@@ -13,7 +13,8 @@
 PowerShell (repo root):
 
 ```powershell
-git pull
+git fetch origin
+git switch --track origin/chatgpt/unified-test-harness
 python -m pip install numpy matplotlib pytest
 python -m pytest -q harness/tests
 python -m unittest discover -s tests -v

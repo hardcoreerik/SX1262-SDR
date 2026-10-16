@@ -1,5 +1,12 @@
 # Current handoff
 
+## Newer unified harness review — 2026-10-16
+The main real-device orchestration is **harness/run_sweep.py**, using Grok's Pluto controller, RTL reference, serial profile system and simulation. The root `tools/analyze_sweep.py` is only an offline audit reader; do not build a second bench runner. See `harness/LOCAL_QUICKSTART.md` and `harness/VERIFY.md`.
+
+The unified branch rejects partial SXPROBE/PLL failures; tests paired source-OFF; treats RSSI nominal-centre retune as non-independent; adds append-only launch-directory log, fail-safe cleanup, and explicit hardware arm gate. Live Heltec firmware remains unimplemented, and any >RTL-reference-frequency source claim remains UNVERIFIED until corroborated.
+
+## Previous scaffold handoff
+
 ## Complete
 - Created isolated project structure in hardcoreerik/SX1262-SDR.
 - Evidence summary and receive-only test plan.

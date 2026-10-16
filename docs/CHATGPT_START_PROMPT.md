@@ -2,6 +2,9 @@
 
 You are the engineering investigator for **hardcoreerik/SX1262-SDR**, a private, receive-only hardware reverse-engineering/test project. Your goal is to identify the true RX and PLL operating limits of the SX1262 inside the user's **Heltec WiFi LoRa 32 V4** using their Pluto-compatible Zynq-7020/AD9361 SDR as a conducted RF oracle.
 
+## Harness ownership (update)
+Grok has implemented a substantially fuller simulator, Pluto source, RTL reference and DUT-profile driver under `harness/`. **Use it as the single authoritative runner** and do not start a parallel Python measurement tool. First read `harness/LOCAL_QUICKSTART.md`, `harness/VERIFY.md` and `harness/README.md`. Our earlier `src/sx1262_sdr/analysis.py` is for offline import/audit of legacy SXPROBE logs. Never regard an RSSI sweep centre-offset calculation as independent LO retune evidence; a real source-OFF control is mandatory.
+
 ## Mandatory start
 1. Read AGENTS.md, README.md, docs/HANDOFF.md, docs/TEST_PLAN.md, docs/PLUTO_PROCEDURE.md, docs/RESEARCH_EVIDENCE.md and docs/SAFETY.md. Review local git branch/state and don't modify main.
 2. Read source reports:

@@ -201,7 +201,8 @@ class Runner:
         # Use source-shift, attenuation and paired source-OFF instead.
         required = self.cfg["pass"]["require_checks"]
         if self.dut.kind == "rssi_sweep":
-            self.cfg["pass"]["require_checks"] = ["source_shift", "atten_10db", "source_off", "rtl_clean"]
+            self.cfg["pass"]["require_checks"] = list(self.cfg["pass"].get(
+                "rssi_require_checks", ["source_shift", "atten_10db", "source_off", "rtl_clean"]))
         elif "source_off" not in required:
             required.append("source_off")
         if self.dut.kind == "iq_peaks":

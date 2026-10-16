@@ -1,5 +1,7 @@
 # SX1262 Heltec V4 RF capability test plan
 
+**Single orchestration harness:** `harness/run_sweep.py`. The earlier `tools/analyze_sweep.py` is only a static log parser. Begin with `harness/LOCAL_QUICKSTART.md`. Live hardware blocked by the placeholder profile until verified board-specific firmware is built and separately authorized.
+
 ## Gates and milestones
 ### 0. Freeze scope
 Receive-only SX1262 tests. No firmware flash without explicit approval, no RF TX through SX1262. Preserve Meshtastic image/config. Document exact Heltec revision and Pluto clone's actual supported RF connectors/controls.

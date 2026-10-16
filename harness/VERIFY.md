@@ -35,7 +35,7 @@ The README must state, and the data must show, each of these:
       only signal was the board's own 40 MHz harmonics at unknown level (lines 66-71).
 - [ ] **A numeric pass threshold.** Upstream counted 1-9 dB over the floor as "weak reception" (lines 28, 85). The
       harness default is SNR >= 10 dB and all four checks.
-- [ ] **The four checks reported for every frequency:** source shift, retune, 10 dB attenuation and RTL-clean.
+- [ ] **Architecture-appropriate checks reported for every frequency:** on SX1262 RSSI sweeps require source shift, 10 dB attenuation, paired source-OFF and RTL reference where it can actually tune. Retune-offset does not count as independent evidence for a sweep of absolute frequencies; for IQ receivers retain a real LO-retune check.
       "Stays put when the tune moves" (lines 69-71) does not rule out an image or a different comb line.
 - [ ] **Repeatability.** At least 5 reps in randomised order, with the seed recorded and mean and spread reported.
       Upstream quotes lock edges to 1 MHz from one pass (lines 41-42, 44-52).
@@ -105,5 +105,5 @@ The README must state, and the data must show, each of these:
 
 - [ ] The new firmware's console commands are added as a profile in `config/dut_profiles.json`, with
       template, done_regex, parser and file:line sources, and `sx1262_sdr_tbd` is replaced.
-- [ ] `python -m pytest -q harness/tests  (from the repo root)` passes, with a parser test that uses the new firmware's literal output.
+- [ ] `python -m pytest -q harness/tests` (from the repo root) passes, with a parser test that uses the new firmware's literal output.
 - [ ] One real bench run is committed with its `meta.json`, and the README's claims match `summary.csv`.

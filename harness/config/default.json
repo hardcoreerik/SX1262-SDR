@@ -87,6 +87,13 @@
       "source_shift",
       "retune",
       "atten_10db",
+      "source_off",
+      "rtl_clean"
+    ],
+    "rssi_require_checks": [
+      "source_shift",
+      "atten_10db",
+      "source_off",
       "rtl_clean"
     ],
     "atten_tol_db": 2.0,
