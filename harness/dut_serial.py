@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Part of the SX1262-SDR bench harness. Credits: see harness/README.md.
-"""Serial wrapper for the DUT's receive-only probe commands (SX1262 / LR2021 boards).
+"""Serial wrapper for DUT receive probes and bounded Heltec test transmit commands.
 
 The console formats parsed here are those of SAMS0N1TE's GPL-3.0 projects lr2021-sdr and
 LakeShark (file:line evidence in config/dut_profiles.json).
@@ -112,6 +112,85 @@ def parse_sxprobe(text):
     return out
 
 
+def parse_heltec_probe(text):
+    """Versioned RSSI/status row from the SX1262-SDR Heltec V4.3 firmware."""
+    m = re.search(r"^SXPROBE1 (.*)$", text, re.M)
+    if not m:
+        return {"ok": False}
+    fields = dict(KV.findall(m.group(1)))
+    try:
+        return {"ok": fields.get("ok") == "1", "frequency_hz": int(fields["f_hz"]),
+                "dwell_ms": int(fields["dwell_ms"]),
+                "rssi_dbm": float(fields["rssi_dbm"]) if fields.get('ok') == '1' else None,
+                "status": int(fields["status"], 16), "errors": int(fields["errors"], 16),
+                "code": fields.get("code", ""), "mode": fields.get("mode"),
+                "bandwidth_hz": int(fields.get("bw_hz", "0")),
+                "reads": int(fields.get("reads", "1")),
+                "cal_errors": int(fields.get("cal_errors", "0"), 16)}
+    except (KeyError, ValueError):
+        return {"ok": False}
+
+
+def parse_heltec_audio(text):
+    """Strict ordered capture framing; reject incomplete or corrupted bursts."""
+    try:
+        lines = text.strip().splitlines()
+        headers = [i for i, line in enumerate(lines) if line.startswith('SXCAP1 ')]
+        ends = [i for i, line in enumerate(lines) if line.startswith('SXCAPEND1 ')]
+        if len(headers) != 1 or len(ends) != 1 or headers[0] >= ends[0]:
+            return {'ok': False}
+        h = dict(KV.findall(lines[headers[0]]))
+        e = dict(KV.findall(lines[ends[0]]))
+        data = bytearray()
+        for line in lines[headers[0]+1:ends[0]]:
+            m = re.fullmatch(r'SXDATA1 offset=(\d+) hex=([0-9A-Fa-f]+)', line)
+            if not m or int(m[1]) != len(data): return {'ok': False}
+            data.extend(bytes.fromhex(m[2]))
+        n, rate = int(h['n']), int(h['rate_hz'])
+        status, errors = int(h['status'], 16), int(h['errors'], 16)
+        cs = (status >> 1) & 7
+        ok = (h['ok'] == '1' and h['code'] == 'ESP_OK' and e['stop'] == '1' and
+              errors == 0 and int(h.get('cal_errors', '0'), 16) == 0 and
+              (status >> 4) & 7 == 5 and cs not in (3, 4, 5, 7) and
+              1 < n <= rate and rate in (1000, 2000, 4000, 8000) and
+              (88000000 <= int(h['f_hz']) <= 108000000 or int(h['f_hz']) == 250001000) and int(h['bw_hz']) in (58600, 467000) and
+              len(data) == n * 7 == int(e['bytes']) and len(e['crc32']) == 8 and
+              zlib.crc32(data) & 0xFFFFFFFF == int(e['crc32'], 16))
+        return {'ok': bool(ok), 'data': bytes(data), 'n': n, 'rate_hz': rate,
+                'frequency_hz': int(h['f_hz']), 'bandwidth_hz': int(h['bw_hz']), 'status': status, 'errors': errors}
+    except (KeyError, ValueError):
+        return {'ok': False}
+
+
+def parse_heltec_tx(text):
+    m = re.search(r"^SXTX1 (.*)$", text, re.M)
+    if not m:
+        return {"ok": False}
+    fields = dict(KV.findall(m.group(1)))
+    try:
+        fields["ok"] = fields.get("ok") == "1"
+        if "f_hz" in fields:
+            fields["frequency_hz"] = int(fields["f_hz"])
+        if "irq" in fields:
+            fields["irq"] = int(fields["irq"], 16)
+        return fields
+    except ValueError:
+        return {"ok": False}
+
+
+def parse_heltec_info(text):
+    """Board and firmware identity emitted by the local Heltec V4.3 image."""
+    m = re.search(r"^SX1262-SDR fw=(\S+) board=(\S+) fem=(\S+)(?:\s+.*)?$", text, re.M)
+    if not m:
+        return {"ok": False}
+    return {"ok": True, "firmware": m.group(1), "board": m.group(2), "fem": m.group(3)}
+
+
+def heltec_identity_matches(profile, info):
+    required = profile.get("required_firmware_identity", {})
+    return bool(info.get("ok") and required and all(info.get(k) == v for k, v in required.items()))
+
+
 def parse_lrfifo_dump(text):
     """`lrfifo-hex:` lines + `lrfifo-crc32:` (SDR main.c:76-90). Returns bytes and CRC status."""
     chunks = {}
@@ -158,6 +237,8 @@ def analyze_iq16le(data, rate, n=1024, npeaks=8):
 
 
 PARSERS = {"kv": parse_kv, "info": parse_info, "lrprobe": parse_lrprobe, "sxprobe": parse_sxprobe,
+           "heltec_probe": parse_heltec_probe, "heltec_tx": parse_heltec_tx, "heltec_info": parse_heltec_info,
+           "heltec_audio": parse_heltec_audio,
            "lrfifo_dump": parse_lrfifo_dump}
 
 
@@ -208,6 +289,26 @@ class SimTransport:
 
     def exchange(self, line, done_re, timeout_s):
         a = line.split()
+        if a and a[0] == "info" and self.profile.get("board") == "HTIT-WB32LAF-V4.3":
+            return "SX1262-SDR fw=1.6 board=HTIT-WB32LAF-V4.3 fem=KCT8103L rx_min_hz=1000000 rx_modes=lora,gfsk tx=one-shot-armed-test-packet\n", True
+        if a and a[0] == "probe" and self.profile.get("board") == "HTIT-WB32LAF-V4.3":
+            hz, dwell = int(a[1]), int(a[2])
+            level = self.bench.sx_rssi(hz / 1000.0, 4800)
+            errors = 0 if level is not None else 0x0040
+            if level is None:
+                level = self.bench.rssi_floor_dbm
+            gfsk = len(a) > 3 and a[3] in ('gfsk', 'gfsk58', 'gfsk467')
+            bw = {'gfsk':4800,'gfsk58':58600,'gfsk467':467000}.get(a[3] if len(a)>3 else 'lora',125000)
+            return ("SXPROBE1 f_hz=%d dwell_ms=%d ok=%d rssi_dbm=%.1f status=0x%02X errors=0x%04X code=ESP_OK mode=%s bw_hz=%d reads=%d cal_errors=0x0000\n"
+                    % (hz, dwell, not errors, level, 0x3A if errors else 0x52, errors,
+                       'gfsk' if gfsk else 'lora', bw,
+                       0 if errors else 8 if gfsk else 1)), True
+        if a and a[0] == "armtx" and self.profile.get("board") == "HTIT-WB32LAF-V4.3":
+            return "SXTXARM1 packets=1 power_dbm=-9 expires_ms=30000\n", True
+        if a and a[0] == "stop" and self.profile.get("board") == "HTIT-WB32LAF-V4.3":
+            return "SXSTOP1 ok=1 code=ESP_OK\n", True
+        if a and a[0] == "tx" and self.profile.get("board") == "HTIT-WB32LAF-V4.3":
+            return "SXTX1 f_hz=%s ok=1 power_dbm=-9 packets=1 irq=0x01 code=ESP_OK\n" % a[1], True
         if a and a[0] == "TODO-sxprobe":  # placeholder profile: simulate it with sxprobe semantics
             a = ["lora", "sxprobe"] + a[1:]
         if a[:2] == ["lora", "sxprobe"]:
@@ -334,7 +435,7 @@ class Dut:
         spec = self.p["commands"].get(cmd)
         if not spec:
             raise KeyError("profile %s has no command %r" % (self.name, cmd))
-        line = spec["template"].format(**fmt)
+        line = spec["template"].format(**{**self.params, **fmt})
         raw, done = self.t.exchange(line, spec["done_regex"], timeout_s or spec["timeout_s"])
         self.last_raw = raw
         if self.log:
@@ -433,6 +534,9 @@ class Dut:
         stop = int((centre + half) // 1000)
         step_khz = max(1, int(step // 1000))
         pts = (stop - start) // step_khz + 1
+        if self.p.get("instant_probe"):
+            return self._measure_heltec_sweep(tune_hz, expect, window, start * 1000,
+                                              stop * 1000, step_khz * 1000, pts)
         spec = self.p["commands"]["probe"]
         r = self.run("probe", timeout_s=spec["timeout_s"] + pts * spec.get("timeout_per_point_s", 0.03),
                      start_khz=start, stop_khz=stop, step_khz=step_khz, **q)
@@ -463,6 +567,36 @@ class Dut:
         res["image_db"] = None
         res["note"] += "; RSSI sweep searches absolute RF steps: moving the nominal centre alone " \
                        "does not independently validate LO retune; image rejection N/A"
+        return res
+
+    def _measure_heltec_sweep(self, tune_hz, expect, window, start_hz, stop_hz, step_hz, points):
+        dwell_ms = int(self.params.get("dwell_ms", 20))
+        rows = []
+        for hz in range(start_hz, stop_hz + 1, step_hz):
+            r = self.run("probe", freq_hz=hz, dwell_ms=dwell_ms)
+            rows.append({"hz": hz, "r": r})
+        all_rows = [x["r"] for x in rows]
+        locked = bool(all_rows) and all(x.get("ok") and not (x.get("errors", 0) & 0x0040)
+                                        for x in all_rows)
+        complete = len(rows) == points and all(x.get("_done") for x in all_rows)
+        if not rows or not locked or not complete:
+            return {"detected": False, "locked": locked, "raw_ok": False, "snr_db": None,
+                    "level_db": None, "offset_hz": None, "noise_db": None, "peaks": [],
+                    "image_db": None, "image_lower_bound": False, "rbw_hz": step_hz,
+                    "units": "dBm (SX1262 instantaneous RSSI, uncalibrated)",
+                    "note": "rejected incomplete/no-lock Heltec sweep: %d/%d rows" % (len(rows), points)}
+        vals = [x["r"]["rssi_dbm"] for x in rows]
+        floor = sorted(vals)[len(vals) // 2]
+        peaks = sorted(((x["hz"] - tune_hz, x["r"]["rssi_dbm"] - floor) for x in rows),
+                       key=lambda p: -p[1])
+        merged = []
+        for offset, db in peaks:
+            if all(abs(offset - previous) > max(step_hz, 4800) for previous, _ in merged):
+                merged.append((offset, round(db, 2)))
+        res = self._result_from_peaks(merged[:8], floor, step_hz, expect, window, False,
+                                      "dBm (SX1262 RSSI, uncalibrated)", locked,
+                                      "instantaneous RSSI sweep; no I/Q; absolute frequencies")
+        res["image_db"] = None
         return res
 
     def close(self):

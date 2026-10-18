@@ -51,6 +51,37 @@ def test_incomplete_sxprobe_response_is_not_accepted():
     assert dut_serial.parse_sxprobe(data)["ok"] is False
 
 
+def test_heltec_v43_serial_rows_and_tx_gate_are_versioned():
+    profile = dut_serial.load_profiles()["heltec_v4_3_sx1262"]
+    info = dut_serial.parse_heltec_info(
+        "SX1262-SDR fw=1.6 board=HTIT-WB32LAF-V4.3 fem=KCT8103L tx=one-shot-armed-test-packet\n")
+    assert dut_serial.heltec_identity_matches(profile, info)
+    assert not dut_serial.heltec_identity_matches(profile, {"ok": False})
+    assert not dut_serial.heltec_identity_matches(profile, {**info, "fem": "unknown"})
+
+    probe = dut_serial.parse_heltec_probe(
+        "SXPROBE1 f_hz=915000000 dwell_ms=20 ok=1 rssi_dbm=-96.0 status=0x22 errors=0x0000 code=ESP_OK\n")
+    assert probe["ok"] and probe["frequency_hz"] == 915000000
+    assert probe["rssi_dbm"] == -96.0 and probe["errors"] == 0
+    assert dut_serial.parse_heltec_probe("SXPROBE1 broken\n")["ok"] is False
+
+    tx = dut_serial.parse_heltec_tx(
+        "SXTX1 f_hz=915000000 ok=1 power_dbm=-9 packets=1 irq=0x01 code=ESP_OK\n")
+    assert tx["ok"] and tx["frequency_hz"] == 915000000 and tx["irq"] == 1
+
+
+def test_heltec_v43_profile_runs_probe_and_tx_protocol_only_in_sim():
+    d = dut_serial.Dut("heltec_v4_3_sx1262", sim_bench=SimBench())
+    probe = d.run("probe", freq_hz=915000000, dwell_ms=20)
+    assert probe["ok"] and probe["frequency_hz"] == 915000000
+    assert probe["_done"]
+    arm = d.run("armtx")
+    assert arm["_done"]
+    tx = d.run("tx", freq_hz=915000000)
+    assert tx["ok"] and tx["frequency_hz"] == 915000000
+    d.close()
+
+
 def test_simulation_never_claims_hardware_evidence(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     rc = run_sweep.main(["--sim", "--profile", "sx1262_sdr_tbd",
@@ -65,10 +96,31 @@ def test_simulation_never_claims_hardware_evidence(tmp_path, monkeypatch):
     assert meta["verdicts"]["868.000"] == "UNVERIFIED"
 
 
+def test_unverified_rows_do_not_count_as_passes_in_summary(tmp_path):
+    runner = object.__new__(run_sweep.Runner)
+    runner.cfg = {"pass": {"freq_pass_fraction": 0.8}}
+    runner.out = str(tmp_path)
+    logged = []
+    runner.log = logged.append
+    rows = [{"freq_hz": 2700000000.0, "status": "UNVERIFIED", "snr_db": 20.0,
+             "fail_reasons": "rtl_unverified", "noise_db": -118.0, "image_rejection_db": None,
+             "ppm_dut_vs_pluto": None, "mds_tx_gain_db": None, "mds_input_dbm": None,
+             "imd_dbc": None, "rtl_clean": None} for _ in range(5)]
+
+    (summary,) = runner.summarise([2700000000.0], rows)
+    runner.print_summary([summary])
+
+    assert summary["verdict"] == "UNVERIFIED"
+    assert summary["n_pass"] == 0 and summary["n_unverified"] == 5
+    assert summary["pass_fraction"] == 0.0
+    assert any("0/5" in line for line in logged)
+
+
 
 def test_live_placeholder_fails_before_opening_pluto(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     config = run_sweep.load_config()
+    config["dut"]["profile"] = "sx1262_sdr_tbd"
     calls = []
     def no_pluto(*args, **kwargs):
         calls.append(True)
@@ -77,6 +129,22 @@ def test_live_placeholder_fails_before_opening_pluto(tmp_path, monkeypatch):
     with __import__("pytest").raises(RuntimeError, match="TODO"):
         run_sweep.Runner(config, sim=False, out_root=str(tmp_path / "runs"))
     assert calls == []
+
+
+def test_heltec_live_profile_requires_exact_firmware_identity():
+    profile = dut_serial.load_profiles()["heltec_v4_3_sx1262"]
+    assert not profile["todo"]
+    assert not dut_serial.heltec_identity_matches(profile, dut_serial.parse_heltec_info("SX1262-SDR fw=1.0 init=FAIL\n"))
+
+
+def test_live_run_refuses_unknown_heltec_firmware_before_rf_phases():
+    runner = object.__new__(run_sweep.Runner)
+    runner.sim = False
+    runner.cfg = {"meta": {}}
+    profile = dut_serial.load_profiles()["heltec_v4_3_sx1262"]
+    runner.dut = type("DutStub", (), {"p": profile, "info": lambda self: {"ok": False}})()
+    with __import__("pytest").raises(RuntimeError, match="firmware identity mismatch"):
+        runner.run()
 
 
 def test_live_requires_explicit_rf_arming(tmp_path, monkeypatch):

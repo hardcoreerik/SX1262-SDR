@@ -23,6 +23,8 @@ import math
 import re
 import sys
 import time
+import threading
+from contextlib import contextmanager
 
 GAIN_MIN_DB = -89.75  # AD936x TX hardwaregain floor as the driver reports it ("hardwaregain_available")
 DDS_TX1 = {"I_F1": "altvoltage0", "I_F2": "altvoltage1", "Q_F1": "altvoltage2", "Q_F2": "altvoltage3"}
@@ -38,6 +40,30 @@ def parse_available(text):
 
 class SafetyError(RuntimeError):
     pass
+
+
+def am_iq(modulation_hz, depth=0.8):
+    """Fixed bounded test waveform: 100 kHz IF, <=12000 DMA component peak."""
+    import numpy as np
+    if modulation_hz not in (0, 300, 1000, 2500) or depth != 0.8:
+        raise ValueError('Only the fixed AM response test waveforms are supported')
+    t = np.arange(25000)/2500000
+    envelope = (1+depth*np.cos(2*np.pi*modulation_hz*t))/(1+depth) if modulation_hz else np.ones(len(t))
+    z = 12000*envelope*np.exp(2j*np.pi*100000*t)
+    return np.rint(np.column_stack((z.real, z.imag))).astype('<i2').tobytes()
+
+
+def fm_iq(modulation_hz):
+    """Constant envelope, fixed 5 kHz deviation, periodic 100 kHz IF test."""
+    import numpy as np
+    if modulation_hz not in (0, 300, 1000, 2500):
+        raise ValueError('Unsupported FM test tone')
+    t = np.arange(25000)/2500000
+    phase = 2*np.pi*100000*t
+    if modulation_hz:
+        phase += 5000/modulation_hz*np.sin(2*np.pi*modulation_hz*t)
+    z = 12000*np.exp(1j*phase)
+    return np.rint(np.column_stack((z.real, z.imag))).astype('<i2').tobytes()
 
 
 class PlutoSource:
@@ -167,7 +193,91 @@ class PlutoSource:
             self._attr(self._phy, "voltage0", "hardwaregain", gain_db)
         self.enabled = True
         time.sleep(0.0 if self.backend == "sim" else 0.05)
+        self.state['frequency_readback'] = self.frequency_readback()
         return dict(self.state)
+
+    def am_burst(self, modulation_hz):
+        return self._modulation_burst(modulation_hz, 'am', 0)
+
+    def fm_burst(self, modulation_hz, offset_hz=0):
+        return self._modulation_burst(modulation_hz, 'fm', offset_hz)
+
+    @contextmanager
+    def _modulation_burst(self, modulation_hz, kind, offset_hz):
+        """250.001 MHz conducted AM; independent timer requests TX OFF after 2 s."""
+        import iio
+        if self.backend != 'iio':
+            raise SafetyError('AM burst requires the native IIO backend')
+        self._check_safety(-60)
+        if kind not in ('am', 'fm') or offset_hz not in range(-40000,40001,10000) or (kind == 'am' and offset_hz != 0):
+            raise ValueError('Unsupported conducted modulation setting')
+        payload = fm_iq(modulation_hz) if kind == 'fm' else am_iq(modulation_hz)
+        self.disable()
+        saved, channels = [], []
+        buf = timer = None
+        txch = self._phy.find_channel('voltage0', True)
+        lo = self._phy.find_channel('altvoltage1', True)
+        def set_attr(ch, name, value):
+            attr = ch.attrs[name]
+            saved.append((attr, attr.value))
+            attr.value = str(value)
+        try:
+            for ch in self._dds.channels:
+                if ch.scan_element:
+                    channels.append((ch, ch.enabled))
+                    ch.enabled = ch.id in ('voltage0', 'voltage1')
+            set_attr(txch, 'sampling_frequency', 2500000)
+            set_attr(txch, 'rf_bandwidth', 300000)
+            set_attr(txch, 'rf_port_select', 'A')
+            set_attr(lo, 'frequency', 249901000 + offset_hz)
+            if int(txch.attrs['sampling_frequency'].value) != 2500000:
+                raise RuntimeError('Unexpected TX sample clock')
+            fmt = self._dds.find_channel('voltage0', True).data_format
+            if fmt.length != 16 or not fmt.is_signed or fmt.is_be:
+                raise RuntimeError('Unsupported DMA format')
+            buf = iio.Buffer(self._dds, len(payload)//4, True)
+            if buf.write(bytearray(payload)) != len(payload):
+                raise RuntimeError('Incomplete AM waveform write')
+            buf.push()
+            timer = threading.Timer(2.0, self.disable)
+            timer.daemon = True
+            timer.start()
+            started = time.monotonic()
+            lo.attrs['powerdown'].value = '0'
+            txch.attrs['hardwaregain'].value = '-60'
+            self.enabled = True
+            yield {'rf_hz': 250001000 + offset_hz, 'lo_hz': 249901000 + offset_hz, 'baseband_hz': 100000,
+                   'sample_rate_hz': 2500000, 'modulation_hz': modulation_hz,
+                   'kind': kind, 'offset_hz': offset_hz,
+                   'depth': 0.8 if modulation_hz and kind == 'am' else 0,
+                   'deviation_hz': 5000 if modulation_hz and kind == 'fm' else 0, 'tx_gain_db': -60,
+                   'max_component': 12000, 'tx_off_timer_s': 2.0,
+                   'host_started_monotonic': started,
+                   'basis': 'Generated waveform and IIO readback; RF purity and absolute power unverified'}
+        finally:
+            self.disable()
+            if timer:
+                timer.cancel()
+                timer.join(3)
+            if buf is not None:
+                buf.cancel()
+                buf = None
+            for ch, enabled in channels:
+                ch.enabled = enabled
+            for attr, value in reversed(saved):
+                attr.value = value
+            self.disable()
+
+    def frequency_readback(self):
+        """Driver-reported LO/DDS sum, not an independent RF measurement."""
+        if self.backend != 'iio':
+            return None
+        lo = int(self._phy.find_channel('altvoltage1', True).attrs['frequency'].value)
+        i = int(self._dds.find_channel(DDS_TX1['I_F1'], True).attrs['frequency'].value)
+        q = int(self._dds.find_channel(DDS_TX1['Q_F1'], True).attrs['frequency'].value)
+        return {'lo_hz': lo, 'dds_i_hz': i, 'dds_q_hz': q,
+                'lo_plus_dds_i_hz': lo + i,
+                'basis': 'IIO driver readback; absolute frequency unverified'}
 
     def set_gain(self, gain_db):
         if self.state["lo"] is None:

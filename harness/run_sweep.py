@@ -32,6 +32,7 @@ import os
 import platform
 import random
 import statistics
+import hashlib
 import subprocess
 import sys
 import time
@@ -39,7 +40,7 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
-from dut_serial import Dut, load_profiles  # noqa: E402
+from dut_serial import Dut, load_profiles, heltec_identity_matches  # noqa: E402
 from pluto_source import PlutoSource  # noqa: E402
 from rtl_reference import RtlReference  # noqa: E402
 
@@ -475,14 +476,301 @@ class Runner:
         return row
 
     # -------------------------------------------------------------- run --
+    def run_pll_only(self):
+        """RX tuning/status survey with the external source disabled throughout."""
+        started = now_iso()
+        info = self.dut.info()
+        if not heltec_identity_matches(self.dut.p, info):
+            raise RuntimeError('Heltec firmware identity mismatch')
+        self.src.disable()
+        if not self.sim and self.src._phy.find_channel('altvoltage1', True).attrs['powerdown'].value != '1':
+            raise RuntimeError('Pluto TX OFF readback failed')
+        self.log('RX-only synthesizer survey: Pluto TX OFF; no external stimulus; no receive proof')
+        rows, probes = [], []
+        try:
+            for order, mhz in enumerate(self.cfg['sweep']['frequencies_mhz'], 1):
+                hz = int(round(float(mhz) * 1e6))
+                sample = self.dut.run('probe', freq_hz=hz, dwell_ms=20)
+                probes.append(sample)
+                if not sample.get('_done'):
+                    raise RuntimeError('DUT communications lost; survey stopped')
+                reasons = []
+                if not sample.get('ok'): reasons.append('probe_invalid')
+                if sample.get('errors', 0): reasons.append('device_errors_0x%04X' % sample['errors'])
+                row = dict.fromkeys(MEAS_FIELDS)
+                row.update(run_id=self.run_id, order=order, rep=1, freq_hz=hz, tune_hz=hz,
+                           status='FAIL' if reasons else 'UNVERIFIED',
+                           fail_reasons=';'.join(reasons or ['no_external_stimulus']),
+                           level_db=sample.get('rssi_dbm'), capture_ok=bool(sample.get('ok')),
+                           units='SX1262 instantaneous RSSI dBm (uncalibrated)',
+                           rx_note='status=0x%02X errors=0x%04X; no lock flag or source-correlated reception'
+                                   % (sample.get('status', 0), sample.get('errors', 0)), timestamp=now_iso())
+                rows.append(row)
+                self.log('%.3f MHz: ok=%s status=0x%02X errors=0x%04X RSSI=%s'
+                         % (mhz, sample.get('ok'), sample.get('status', 0),
+                            sample.get('errors', 0), sample.get('rssi_dbm')))
+        finally:
+            try:
+                stopped = self.dut.run('stop')
+                if not stopped.get('_done') or str(stopped.get('ok')) != '1':
+                    raise RuntimeError('Heltec standby not confirmed')
+            finally:
+                self.src.disable()
+        with open(os.path.join(self.out, 'measurements.csv'), 'w', newline='') as fh:
+            writer = csv.DictWriter(fh, fieldnames=MEAS_FIELDS)
+            writer.writeheader()
+            writer.writerows(rows)
+        summary = self.summarise([int(round(float(f) * 1e6)) for f in self.cfg['sweep']['frequencies_mhz']], rows)
+        meta = {'run_id': self.run_id, 'simulated': self.sim, 'started': started, 'finished': now_iso(),
+                'mode': 'pll-only', 'direction': 'heltec-rx-source-off', 'harness_commit': git_commit(),
+                'meta': self.cfg['meta'], 'path': self.cfg['path'], 'config': self.cfg,
+                'dut': {'profile': self.dut.name, 'info': info}, 'pluto': self.src.describe(), 'probes': probes,
+                'evidence': 'SIMULATED' if self.sim else 'COMMAND_ACCEPTED',
+                'limitations': 'No external RF stimulus; clear error flags are not an independent PLL lock or receive proof; image calibration is only performed at 902-928 MHz'}
+        with open(os.path.join(self.out, 'meta.json'), 'w') as fh:
+            json.dump(meta, fh, indent=2, default=str)
+        self.log('Survey saved: ' + self.out)
+        with open(os.path.join(self.out, 'sha256.txt'), 'w') as fh:
+            for name in ('meta.json', 'measurements.csv', 'summary.csv', 'run.log'):
+                with open(os.path.join(self.out, name), 'rb') as evidence:
+                    fh.write(hashlib.sha256(evidence.read()).hexdigest() + '  ' + name + '\n')
+        return self.out, summary
+
+    def run_nominal(self, receive_check=False):
+        """Bounded unfiltered RSSI checks; never a sensitivity or source-purity claim."""
+        started = now_iso()
+        info = self.dut.info()
+        if not heltec_identity_matches(self.dut.p, info):
+            raise RuntimeError('Heltec identity mismatch; no RF enabled')
+        self.src.disable()
+        if not self.sim and self.src._phy.find_channel('altvoltage1', True).attrs['powerdown'].value != '1':
+            raise RuntimeError('Pluto TX OFF readback failed before baseline')
+        freqs = ([int(round(float(f) * 1e6)) for f in self.cfg['sweep']['frequencies_mhz']]
+                 if receive_check else [915000000])
+        tone_offset = 1000 if str(self.dut.params.get('probe_mode')).startswith('gfsk') else 20000
+        if not freqs or len(freqs) > 20:
+            raise ValueError('Bounded receive check requires 1..20 frequencies')
+        offsets = self.cfg['sweep'].get('rx_offsets_hz', [0]) if receive_check else [0]
+        offset_scan = offsets != [0]
+        fixed_rx = self.cfg['sweep'].get('fixed_rx_hz')
+        if fixed_rx is not None and (not receive_check or offset_scan or
+                not str(self.dut.params.get('probe_mode')).startswith('gfsk') or
+                not 37000000 <= fixed_rx <= 340000000 or
+                any(not 37000000 <= hz + tone_offset <= 340000000 or
+                    abs(hz + tone_offset - fixed_rx) > 400000 for hz in freqs)):
+            raise ValueError('Fixed RX check requires GFSK receive-check, no RX offsets, source/RX <=340 MHz within 400 kHz')
+        if (not offsets or len(offsets) > 19 or any(not -400000 <= o <= 400000 for o in offsets) or
+                (offset_scan and (len(freqs) > 3 or max(freqs) > 340000000 or
+                                  not str(self.dut.params.get('probe_mode')).startswith('gfsk')))):
+            raise ValueError('Lower offset check requires GFSK, <=3 sources <=340 MHz, <=19 offsets within +/-400 kHz')
+        for hz in freqs:
+            if not 37000000 <= hz <= 3000000000 or not self.src.covers(min(hz + tone_offset, 3000000000)):
+                raise ValueError('Receive check outside detected source range or 3 GHz attenuator rating: %s' % hz)
+        rows, raw_samples, failed_freqs = [], [], set()
+        gains = (-60.0,) if offset_scan or fixed_rx is not None else (-80.0, -70.0, -60.0)
+        items = [(hz, gain, offset) for hz in freqs for gain in gains for offset in offsets]
+        try:
+            for order, (hz, gain, offset) in enumerate(items, 1):
+                if hz in failed_freqs:
+                    continue
+                source_hz = min(hz + tone_offset, 3000000000)
+                tune_hz = fixed_rx if fixed_rx is not None else hz + offset
+                off = self.dut.run('probe', freq_hz=tune_hz, dwell_ms=20)
+                if not off.get('_done') or not off.get('ok') or off.get('errors'):
+                    if receive_check and off.get('_done') and off.get('errors'):
+                        failed_freqs.add(hz)
+                        row = dict.fromkeys(MEAS_FIELDS)
+                        row.update(run_id=self.run_id, order=order, rep=1, freq_hz=hz, tune_hz=tune_hz,
+                                   status='FAIL', fail_reasons='device_errors_no_source_enabled',
+                                   capture_ok=False, rx_note=str(off), timestamp=now_iso())
+                        rows.append(row)
+                        raw_samples.append({'frequency_hz': hz, 'before': off, 'source_enabled': False})
+                        self.log('%.3f MHz: device errors before TX; source not enabled' % (hz / 1e6))
+                        continue
+                    raise RuntimeError('Invalid source-OFF RX probe; refusing TX')
+                self.log('Pluto source ON: %d Hz, hardwaregain=%.1f dB, fixed pad=30 dB' % (source_hz, gain))
+                try:
+                    source_state = self.src.set_tone(source_hz, gain)
+                    self.log('Pluto source state: %s' % json.dumps(source_state, default=str))
+                    on = self.dut.run('probe', freq_hz=tune_hz, dwell_ms=20)
+                finally:
+                    self.src.disable()
+                    self.log('Pluto source OFF requested')
+                if not self.sim and self.src._phy.find_channel('altvoltage1', True).attrs['powerdown'].value != '1':
+                    raise RuntimeError('Pluto TX OFF unconfirmed; independently check RF OFF')
+                after = self.dut.run('probe', freq_hz=tune_hz, dwell_ms=20)
+                raw_samples.append({'frequency_hz': hz, 'tune_hz': tune_hz, 'rx_offset_hz': tune_hz - hz,
+                                    'source_state': source_state,
+                                    'gain_db': gain, 'before': off, 'on': on, 'after': after})
+                if not all(x.get('_done') and x.get('ok') and x.get('errors') == 0
+                           for x in (off, on, after)):
+                    raise RuntimeError('Invalid RX/status response; stopped nominal test')
+                delta = on['rssi_dbm'] - off['rssi_dbm']
+                quiet = abs(after['rssi_dbm'] - off['rssi_dbm']) <= 3
+                row = dict.fromkeys(MEAS_FIELDS)
+                row.update(run_id=self.run_id, order=order, rep=1, freq_hz=hz,
+                           tune_hz=tune_hz, source_hz=source_hz, tx_gain_db=gain,
+                           status='UNVERIFIED', fail_reasons='unfiltered_receive_check' if receive_check else 'unfiltered_nominal_baseline',
+                           level_db=on['rssi_dbm'], noise_db=off['rssi_dbm'],
+                           units='SX1262 instantaneous RSSI dBm (uncalibrated)',
+                           detected=delta >= 3, source_off_ok=quiet, capture_ok=True,
+                           rx_note='ON-OFF delta=%.1f dB; post-OFF=%.1f dBm; no source-purity verification'
+                                   % (delta, after['rssi_dbm']), timestamp=now_iso())
+                rows.append(row)
+                self.log('%.3f MHz gain %.1f dB RXoffset %+.1f kHz: OFF %.1f, ON %.1f, post-OFF %.1f dBm RSSI; delta %.1f dB'
+                         % (hz / 1e6, gain, (tune_hz - hz) / 1000, off['rssi_dbm'], on['rssi_dbm'], after['rssi_dbm'], delta))
+        except BaseException as exc:
+            self.log('Receive check aborted; partial evidence preserved: %s' % exc)
+            with open(os.path.join(self.out, 'partial.json'), 'w') as fh:
+                json.dump({'run_id': self.run_id, 'simulated': self.sim, 'status': 'aborted',
+                           'started': started, 'finished': now_iso(), 'error': str(exc),
+                           'dut_info': info, 'config': self.cfg, 'measurements': rows,
+                           'probes': raw_samples}, fh, indent=2, default=str)
+            raise
+        finally:
+            try:
+                stopped = self.dut.run('stop')
+                if not stopped.get('_done') or str(stopped.get('ok')) != '1':
+                    raise RuntimeError('Heltec standby not confirmed')
+            finally:
+                self.src.disable()
+        with open(os.path.join(self.out, 'measurements.csv'), 'w', newline='') as fh:
+            writer = csv.DictWriter(fh, fieldnames=MEAS_FIELDS)
+            writer.writeheader()
+            writer.writerows(rows)
+        summary = self.summarise(freqs, rows)
+        meta = {'run_id': self.run_id, 'simulated': self.sim, 'started': started, 'finished': now_iso(),
+                'direction': 'pluto-tx-heltec-rx', 'mode': 'bounded-receive-check' if receive_check else 'nominal-915-only',
+                'rx_offsets_hz': offsets,
+                'fixed_rx_hz': fixed_rx,
+                'scan_axis': 'source-frequency' if fixed_rx is not None else 'receiver-frequency',
+                'harness_commit': git_commit(), 'meta': self.cfg['meta'], 'path': self.cfg['path'],
+                'pluto': self.src.describe(), 'dut': {'profile': self.dut.name, 'info': info},
+                'probes': raw_samples, 'config': self.cfg,
+                'evidence': 'SIMULATED' if self.sim else 'RSSI_OBSERVED',
+                'limitations': 'Operator-authorized SSTV pad/cable setup without source filter; uncalibrated RSSI, no independent source-purity check, frequency tracking or sensitivity claim; out-of-band image calibration not validated'}
+        with open(os.path.join(self.out, 'meta.json'), 'w') as fh:
+            json.dump(meta, fh, indent=2, default=str)
+        self.print_summary(summary)
+        with open(os.path.join(self.out, 'sha256.txt'), 'w') as fh:
+            for name in ('meta.json', 'measurements.csv', 'summary.csv', 'run.log'):
+                with open(os.path.join(self.out, name), 'rb') as evidence:
+                    fh.write(hashlib.sha256(evidence.read()).hexdigest() + '  ' + name + '\n')
+        return self.out, summary
+
+    def run_heltec_tx(self):
+        """One fixed 915 MHz packet, received by Pluto with TX LO powered down."""
+        from pluto_receiver import PlutoReceiver
+        started = now_iso()
+        info = self.dut.info()
+        if not heltec_identity_matches(self.dut.p, info):
+            raise RuntimeError('Heltec firmware identity mismatch; no packet armed')
+        self.src.disable()
+        if not self.sim:
+            powerdown = self.src._phy.find_channel('altvoltage1', True).attrs['powerdown'].value
+            if powerdown != '1':
+                raise RuntimeError('Pluto TX LO shutdown could not be confirmed')
+            self.log('Pluto TX LO powerdown=1 verified; receiving on RX1')
+        receiver = None
+        rx_config = {'frequency_hz': 915000000, 'port': self.cfg['pluto'].get('rx_port', 'A_BALANCED')}
+
+        def transmit():
+            arm = self.dut.run('armtx')
+            if not arm.get('_done') or str(arm.get('packets')) != '1':
+                raise RuntimeError('Heltec did not confirm one-packet arm')
+            result = self.dut.run('tx', freq_hz=915000000)
+            if not result.get('_done') or not result.get('ok') or not result.get('irq', 0) & 1:
+                raise RuntimeError('Heltec TX completion failed: %s' % result)
+            return result
+
+        try:
+            stopped = self.dut.run('stop')
+            if not stopped.get('_done') or str(stopped.get('ok')) != '1':
+                raise RuntimeError('Heltec standby not confirmed before test')
+            if self.sim:
+                tx = transmit()
+                blocks = [{'elapsed_s': t, 'rms_dbfs': power, 'clipped_fraction': 0.0,
+                           'samples': 8192, 'phase': phase} for t, power, phase in
+                          [(0.1, -70, 'baseline'), (0.2, -71, 'baseline'),
+                           (0.4, -40, 'trigger'), (0.5, -42, 'trigger'),
+                           (0.8, -70, 'post'), (0.9, -71, 'post')]]
+            else:
+                receiver = PlutoReceiver(self.src, port=rx_config['port'])
+                rx_config = receiver.config
+                self.log('Pluto RX settings: ' + json.dumps(rx_config))
+                blocks, tx = receiver.capture(transmit)
+        finally:
+            try:
+                stopped = self.dut.run('stop')
+                if not stopped.get('_done') or str(stopped.get('ok')) != '1':
+                    raise RuntimeError('Heltec stop unconfirmed; independently check RF OFF')
+            finally:
+                try:
+                    if receiver is not None:
+                        receiver.close()
+                finally:
+                    self.src.disable()
+        with open(os.path.join(self.out, 'pluto_rx_blocks.csv'), 'w', newline='') as fh:
+            writer = csv.DictWriter(fh, fieldnames=list(blocks[0]))
+            writer.writeheader()
+            writer.writerows(blocks)
+        baseline = [r['rms_dbfs'] for r in blocks if r['phase'] == 'baseline']
+        during = [r['rms_dbfs'] for r in blocks if r['phase'] == 'trigger']
+        post = [r['rms_dbfs'] for r in blocks if r['phase'] == 'post']
+        if not baseline or not during or not post:
+            raise RuntimeError('Incomplete before/during/after Pluto RX capture')
+        floor, level, after = statistics.median(baseline), max(during), statistics.median(post)
+        clipped = max(r['clipped_fraction'] for r in blocks)
+        delta = level - floor
+        reasons = []
+        if delta < 10: reasons.append('no_10db_energy_increase')
+        if abs(after - floor) > 3: reasons.append('post_capture_not_quiet')
+        if clipped > 0: reasons.append('adc_clipping')
+        row = dict.fromkeys(MEAS_FIELDS)
+        row.update(run_id=self.run_id, order=1, rep=1, freq_hz=915000000,
+                   tune_hz=915000000, source_hz=915000000,
+                   status='FAIL' if reasons else 'UNVERIFIED',
+                   fail_reasons=';'.join(reasons or ['energy_only_packet_not_decoded']),
+                   detected=delta >= 10, level_db=level, noise_db=floor,
+                   units='dBFS per-component RMS (uncalibrated)', capture_ok=True,
+                   source_off_ok=abs(after - floor) <= 3, tx_gain_db=-9,
+                   rx_note='One-shot TX; no packet decoding or calibrated power; chip TX setting only',
+                   timestamp=now_iso())
+        with open(os.path.join(self.out, 'measurements.csv'), 'w', newline='') as fh:
+            writer = csv.DictWriter(fh, fieldnames=MEAS_FIELDS)
+            writer.writeheader()
+            writer.writerow(row)
+        summary = self.summarise([915000000], [row])
+        meta = {'run_id': self.run_id, 'simulated': self.sim, 'started': started, 'finished': now_iso(),
+                'direction': 'heltec-tx-pluto-rx', 'harness_commit': git_commit(),
+                'meta': self.cfg['meta'], 'path': self.cfg['path'], 'config': self.cfg,
+                'dut': {'profile': self.dut.name, 'info': info, 'tx': tx},
+                'pluto': self.src.describe(), 'pluto_rx': rx_config,
+                'rx_energy': {'baseline_dbfs': floor, 'trigger_max_dbfs': level, 'post_dbfs': after,
+                              'increase_db': delta, 'clipped_fraction': clipped},
+                'evidence': 'SIMULATED' if self.sim else 'COMMAND_ACCEPTED',
+                'limitations': 'Relative IQ energy only; no LoRa decode, frequency tracking, or calibrated power'}
+        with open(os.path.join(self.out, 'meta.json'), 'w') as fh:
+            json.dump(meta, fh, indent=2, default=str)
+        self.log('RX baseline %.2f dBFS, packet-window max %.2f dBFS, post %.2f dBFS; increase %.2f dB'
+                 % (floor, level, after, delta))
+        self.print_summary(summary)
+        with open(os.path.join(self.out, 'sha256.txt'), 'w') as fh:
+            for name in ('meta.json', 'measurements.csv', 'summary.csv', 'pluto_rx_blocks.csv', 'run.log'):
+                with open(os.path.join(self.out, name), 'rb') as evidence:
+                    fh.write(hashlib.sha256(evidence.read()).hexdigest() + '  ' + name + '\n')
+        return self.out, summary
+
     def run(self):
         t0 = now_iso()
         cfg = self.cfg
+        dut_info = self.dut.info()
+        if not self.sim and self.dut.p.get("required_firmware_identity") and not heltec_identity_matches(self.dut.p, dut_info):
+            raise RuntimeError("DUT firmware identity mismatch; refusing to start RF phases: %s" % dut_info)
         if not self.sim:
             self.ask("board_id", "Board ID / serial")
             self.ask("firmware_commit", "DUT firmware commit")
             self.ask("temperature_c_start", "Room / board temperature now (deg C)")
-        dut_info = self.dut.info()
         if dut_info.get("ok") and dut_info.get("rom") and not cfg["meta"].get("chip_rom_version"):
             cfg["meta"]["chip_rom_version"] = dut_info["rom"]
         if self.sim:
@@ -493,7 +781,7 @@ class Runner:
         freqs, skipped = self.phase0()
         rtl_res = self.phase1(freqs)
         spurs = self.phase2(freqs)
-        self.prompt("Connect the source path to the DUT: Pluto -> filter -> fixed attenuator -> step attenuator -> DUT.")
+        self.prompt("Verify the reported conducted path Pluto -> 30 dB fixed attenuator -> 1 ft SMA cable -> Heltec V4.3, with the attenuator on the Pluto output.")
         items = [(rep, f) for rep in range(1, cfg["sweep"]["reps"] + 1) for f in freqs]
         random.Random(self.seed).shuffle(items)
         rows = []
@@ -538,8 +826,9 @@ class Runner:
             npass = sum(r["status"] == "PASS" for r in rs)
             nunv = sum(r["status"] == "UNVERIFIED" for r in rs)
             snr = [r["snr_db"] for r in rs if r["snr_db"] is not None]
-            frac = (npass + nunv) / n if n else 0
-            if frac >= p["freq_pass_fraction"]:
+            evidence_fraction = (npass + nunv) / n if n else 0
+            pass_fraction = npass / n if n else 0
+            if evidence_fraction >= p["freq_pass_fraction"]:
                 verdict = "PASS" if nunv == 0 else "UNVERIFIED"
             else:
                 verdict = "FAIL"
@@ -549,7 +838,7 @@ class Runner:
                     reasons[x] = reasons.get(x, 0) + 1
             med = lambda k: _r(statistics.median([r[k] for r in rs if r[k] is not None])) if any(r[k] is not None for r in rs) else None  # noqa: E731
             out.append({"freq_hz": f, "freq_mhz": f / 1e6, "n": n, "n_pass": npass, "n_unverified": nunv,
-                        "pass_fraction": round(frac, 3), "verdict": verdict,
+                        "pass_fraction": round(pass_fraction, 3), "verdict": verdict,
                         "snr_mean_db": _r(statistics.mean(snr)) if snr else None,
                         "snr_std_db": _r(statistics.stdev(snr)) if len(snr) > 1 else None,
                         "snr_min_db": _r(min(snr)) if snr else None, "noise_median": med("noise_db"),
@@ -569,7 +858,7 @@ class Runner:
                                                              "MDSgain", "reasons"))
         for s in summary:
             self.log("%-10.3f %-10s %2d/%-2d %7s %7s %8s %8s %8s  %s" % (
-                s["freq_mhz"], s["verdict"], s["n_pass"] + s["n_unverified"], s["n"], s["snr_mean_db"], s["snr_std_db"],
+                s["freq_mhz"], s["verdict"], s["n_pass"], s["n"], s["snr_mean_db"], s["snr_std_db"],
                 s["image_rejection_median_db"], s["ppm_median"], s["mds_tx_gain_median_db"], s["reasons"]))
         self.log("results: %s" % self.out)
 
@@ -597,8 +886,27 @@ def main(argv=None):
     ap.add_argument("--out", help="results root (default ./results)")
     ap.add_argument("--yes", action="store_true", help="skip prompts in simulation only")
     ap.add_argument("--arm-rf", action="store_true", help="hardware only: explicitly acknowledge low-power conducted RF work")
+    modes = ap.add_mutually_exclusive_group()
+    modes.add_argument("--heltec-tx", action="store_true", help="one 915 MHz Heltec packet into Pluto RX1; Pluto TX stays off")
+    modes.add_argument("--nominal-check", action="store_true", help="authorized unfiltered 915 MHz baseline only; not a full sweep")
+    modes.add_argument("--pll-only", action="store_true", help="RX tuning/error survey; Pluto TX stays off; no RF arming needed")
+    modes.add_argument("--receive-check", action="store_true", help="bounded operator-authorized unfiltered RSSI checks, max 20 frequencies, <=3 GHz")
+    modes.add_argument('--pluto-relay', action='store_true', help='bounded RX1 99.1 MHz -> conducted TX1 250 MHz relay, max 10 seconds; no Heltec audio claim')
+    modes.add_argument("--heltec-audio", action="store_true", help="receive-only one-second RSSI bursts at 99.1 MHz; Pluto TX stays off")
+    modes.add_argument("--heltec-modulation", action="store_true", help="bounded conducted 250.001 MHz AM response test; requires RF arming")
+    ap.add_argument("--offair-fm", action="store_true", help="with --heltec-audio: receive-only bounded FM-band captures")
+    ap.add_argument("--fm-slope", action="store_true", help="with --heltec-modulation: 5kHz-deviation FM filter-slope test")
+    ap.add_argument("--arm-heltec-tx", action="store_true", help="arm the bounded reverse-direction test")
+    ap.add_argument("--gfsk-probe", action="store_true", help="Heltec fw 1.2: GFSK 4.8 kHz / XOSC / eight RSSI reads")
+    ap.add_argument('--rx-offsets-khz', help='receive-check/GFSK only: <=19 signed RX offsets within +/-400 kHz, sources <=340 MHz; fixed -60 dB drive')
+    ap.add_argument('--fixed-rx-mhz', type=float, help='receive-check/GFSK only: hold RX fixed while sweeping <=20 nearby sources, <=340 MHz; fixed -60 dB drive')
+    ap.add_argument('--gfsk-bandwidth-hz', type=int, choices=(4800,58600,467000), help='Heltec fw1.3: bounded GFSK filter choice, requires --gfsk-probe')
     ap.add_argument("--no-plot", action="store_true")
     a = ap.parse_args(argv)
+    if a.offair_fm and not a.heltec_audio:
+        print('REFUSED: --offair-fm requires --heltec-audio.'); return 2
+    if a.fm_slope and not a.heltec_modulation:
+        print('REFUSED: --fm-slope requires --heltec-modulation.'); return 2
     extra = {"dut": {}, "pluto": {}, "path": {}, "sweep": {}, "rtl": {}}
     if a.profile: extra["dut"]["profile"] = a.profile
     if a.port: extra["dut"]["port"] = a.port
@@ -609,8 +917,25 @@ def main(argv=None):
     if a.reps: extra["sweep"]["reps"] = a.reps
     if a.imd: extra["sweep"]["imd"] = {"enabled": True}
     if a.no_rtl: extra["rtl"]["enabled"] = False
+    if a.heltec_tx or a.nominal_check or a.pll_only or a.receive_check or a.pluto_relay or a.heltec_audio or a.heltec_modulation: extra["rtl"]["enabled"] = False
     if a.label: extra["label"] = a.label
+    if a.gfsk_bandwidth_hz is not None and not a.gfsk_probe:
+        print('REFUSED: --gfsk-bandwidth-hz requires --gfsk-probe.'); return 2
+    if a.gfsk_probe: extra['dut']['overrides'] = {'probe_mode': {4800:'gfsk',58600:'gfsk58',467000:'gfsk467'}[a.gfsk_bandwidth_hz or 4800]}
+    if a.rx_offsets_khz:
+        if not a.receive_check or not a.gfsk_probe:
+            print('REFUSED: --rx-offsets-khz requires --receive-check --gfsk-probe.')
+            return 2
+        extra['sweep']['rx_offsets_hz'] = [int(round(float(v) * 1000)) for v in a.rx_offsets_khz.split(',')]
+    if a.fixed_rx_mhz is not None:
+        if not a.receive_check or not a.gfsk_probe or a.rx_offsets_khz:
+            print('REFUSED: --fixed-rx-mhz requires --receive-check --gfsk-probe and no RX offsets.')
+            return 2
+        extra['sweep']['fixed_rx_hz'] = int(round(a.fixed_rx_mhz * 1000000))
     cfg = load_config(a.config, extra)
+    if a.gfsk_probe and cfg['dut']['profile'] != 'heltec_v4_3_sx1262':
+        print('REFUSED: --gfsk-probe requires the Heltec V4.3 firmware profile.')
+        return 2
     if cfg["sweep"]["reps"] < 5:
         print("note: fewer than 5 reps; results will not meet the test plan's repeatability rule")
     rng = None
@@ -621,29 +946,52 @@ def main(argv=None):
         if a.yes:
             print("REFUSED: --yes is simulation-only; cabling confirmation cannot be bypassed.")
             return 2
-        if not a.arm_rf:
+    if not a.sim and not (a.pll_only or a.heltec_audio):
+        if a.heltec_tx and not a.arm_heltec_tx:
+            print('REFUSED: Heltec TX requires --arm-heltec-tx and RX1 conducted-path confirmation.')
+            return 2
+        if not a.heltec_tx and not a.arm_rf:
             print("REFUSED: real Pluto TX requires --arm-rf, a verified conducted RF path, and an operator confirmation.")
             return 2
         path = cfg["path"]
         if (path.get("fixed_atten_db") is None or path["fixed_atten_db"] < 30 or
-                not path.get("lowpass_or_bandpass") or
-                "TODO" in str(path["lowpass_or_bandpass"]).upper()):
+                (not a.heltec_tx and not a.nominal_check and not a.receive_check and not a.pluto_relay and not a.heltec_modulation and (not path.get("lowpass_or_bandpass") or
+                "TODO" in str(path["lowpass_or_bandpass"]).upper()))):
             print("REFUSED: specify fitted >=30 dB fixed attenuation and an actual source output filter.")
             return 2
         if not cfg["meta"].get("board_revision") or not cfg["meta"].get("fem_part"):
             print("REFUSED: first identify your actual Heltec board revision and RF front-end in config.")
             return 2
         try:
-            answer = input("With TX OFF, verify coax, filter, attenuators and terminations. Type ARM CONDUCTED RF: ")
+            phrase = ('ARM MODULATION CHECK' if a.heltec_modulation else 'ARM FM RELAY' if a.pluto_relay else 'ARM HELTEC TX' if a.heltec_tx else
+                      'ARM UNFILTERED RECEIVE CHECK' if a.receive_check else 'ARM CONDUCTED RF')
+            prompt = ('Confirm TX1 -> 30 dB pad -> Heltec, no antennas, authorized unfiltered modulation near250.001MHz at -60dB. Type '
+                      if a.heltec_modulation else 'Confirm RX1 monopole and TX1 -> 30 dB pad -> Heltec; authorized bounded unfiltered relay. Type '
+                      if a.pluto_relay else
+                      'Confirm Heltec -> cable -> 30 dB pad -> Pluto RX1, TX1 disconnected. Type '
+                      if a.heltec_tx else
+                      'Confirm TX1 -> 30 dB pad -> Heltec and explicit unfiltered range-check authorization. Type '
+                      if a.receive_check else
+                      'Confirm TX1 -> 30 dB pad -> cable -> Heltec, authorized unfiltered 915 MHz check. Type '
+                      if a.nominal_check else 'With TX OFF, verify coax, filter, attenuators and terminations. Type ')
+            answer = input(prompt + phrase + ': ')
         except (KeyboardInterrupt, EOFError):
             return 130
-        if answer != "ARM CONDUCTED RF":
+        if answer != phrase:
             print("Not armed; no hardware opened.")
             return 2
     runner = None
     try:
         runner = Runner(cfg, a.sim, a.out, a.yes, rng, a.seed)
-        out, summary = runner.run()
+        if a.pluto_relay:
+            from pluto_relay import run_relay
+        if a.heltec_audio:
+            from heltec_audio import run_capture, run_offair
+        if a.heltec_modulation:
+            from heltec_audio import run_modulation, run_fm_slope
+        out, summary = (run_fm_slope(runner) if a.heltec_modulation and a.fm_slope else run_modulation(runner) if a.heltec_modulation else run_offair(runner) if a.heltec_audio and a.offair_fm else run_capture(runner) if a.heltec_audio else run_relay(runner) if a.pluto_relay else runner.run_pll_only() if a.pll_only else
+                        runner.run_heltec_tx() if a.heltec_tx else
+                        runner.run_nominal(a.receive_check) if a.nominal_check or a.receive_check else runner.run())
     except KeyboardInterrupt:
         print("aborted; Pluto TX shutdown requested")
         return 130
@@ -653,7 +1001,7 @@ def main(argv=None):
     finally:
         if runner is not None:
             runner.close()
-    if not a.no_plot:
+    if not a.no_plot and not (a.heltec_tx or a.nominal_check or a.pll_only or a.receive_check or a.pluto_relay or a.heltec_audio or a.heltec_modulation):
         try:
             import plot_results
             plot_results.plot(out)
