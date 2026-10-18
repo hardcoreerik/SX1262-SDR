@@ -4,12 +4,12 @@
 
 ## Current state (2026-10-16)
 
-**Unified host harness: implemented and simulation-tested. Heltec receive-only firmware: not yet implemented. Real Heltec/Pluto RF experiment: NOT RUN.**
+**Heltec V4.3 firmware 1.2 is flashed and responds on COM38. Conducted LoRa RSSI tests show source-dependent responses at discrete frequencies including 200, 1300 and 1400 MHz. Upper-band reception is not demonstrated. Pluto RX capture is working.**
 
 - Grok's `harness/` is our **single authoritative test runner**. ChatGPT's earlier `tools/analyze_sweep.py` remains a separate **offline file parser only**, never an alternative live control workflow.
 - The unified runner performs Pluto tone-source control, RTL source cross-checks within its verified range, SX1262 RSSI / LR2021 IQ profile parsing, negative source-OFF controls, simulated failure injection, repetition, randomized order, and CSV/JSON evidence generation.
-- The SX1262's `sx1262_sdr_tbd` profile is **intentionally simulation-only**. No live firmware can be tested until the correct Heltec revision, FEM and console protocol are established.
-- Every live test requires a physical attenuated/filtered **conducted** setup. The Pluto source is not automatically authorized merely because a user asked to execute the project.
+- The generic `sx1262_sdr_tbd` profile remains **simulation-only**. The Heltec V4.3 profile checks the expected firmware, board and FEM identity before RF phases.
+- The user authorized bidirectional conducted TX/RX and explicitly approved bounded unfiltered receive checks using the established SSTV TX1/30 dB pad/1 ft SMA path. Full source-verified sweeps retain the filter/purity requirements; bounded exploratory checks stay UNVERIFIED. See [the bench record](docs/HELTEC_V43_BENCH_2026-10-16.md).
 
 ## Start here
 
@@ -19,6 +19,7 @@
 - **[Scientific verification checklist](harness/VERIFY.md)** — what makes a result trustworthy.
 - **[Safety and RF constraints](docs/SAFETY.md)** — conditions before any Pluto transmit.
 - **[Technical evidence](docs/RESEARCH_EVIDENCE.md)** — sources versus hypotheses.
+- **[Lower-band experiments](docs/HELTEC_V43_LOWER_BAND_2026-10-16.md)** — controlled 200 MHz tracking and source-OFF sub-37 MHz observations.
 - **[Current handoff](docs/HANDOFF.md)** — what exists, what is blocked, next engineering tasks.
 
 ## Quick no-hardware test (PowerShell, repository root)
@@ -43,19 +44,21 @@ Use a different `--out` filename on repeat; offline results refuse overwrite.
 
 A [SAMS0N1TE SX1262 report](https://github.com/SAMS0N1TE/lr2021-sdr/blob/main/research/sx1262-range/README.md) describes an *individual LilyGO board* that reportedly locked near 37–1447 and 2624–3494 MHz, with a gap around 1448–2622 MHz. Its [actual probe code](https://github.com/SAMS0N1TE/LakeShark/blob/main/components/lakeshark/board/ls_lora_sx126x.c) measures device errors and RSSI but does **not** establish calibrated sensitivity or proven direct external-tone reception at every frequency. [Another SX1262 chirp experiment](https://github.com/ibelinp/SX1262_CHIRP) reports some lower off-band operation.
 
-We will reproduce the edges on Heltec hardware, attempt falsifiable RX-only calibration/sequence variations, and separately verify each external RF tone with controlled source-on/off, source frequency-shift and attenuation behavior.
+We will reproduce the edges on Heltec hardware and verify external signals with source-on/off, source frequency-shift and attenuation behavior. Heltec test TX is limited to the firmware's one-shot 902–928 MHz command.
 
 **Acceptable result classes:** command accepted; PLL lock; RSSI observed; source-correlated response; independently tracked frequency; calibrated sensitivity (only after RF level calibration). These are NOT synonyms.
 
 ## Test system
 
 ```text
-Pluto-compatible AD9361 RF OUT (disabled until authorized)
-   -> verified filter -> verified fixed attenuation -> optional step attenuation
+Pluto-compatible AD9361 TX OUT (disabled until preflight)
+   -> user-reported 30 dB attenuator -> 1 ft SMA cable
    -> shielded/cabled Heltec V4 SX1262 RF input
 
+Reverse direction uses Pluto RX1 and the integrated --heltec-tx capture path; receive streaming is verified, but no Heltec test packet has been transmitted.
+
 RTL-SDR V4: independent source reference, only within validated RTL receive range
-Pluto RX: potential high-band reference, NOT yet integrated or validated
+Pluto RX: integrated and streaming-tested; NOT an independently calibrated high-band reference
 NewcorePC Windows: harness/run_sweep.py + serial device + persisted bench evidence
 ```
 
@@ -70,7 +73,7 @@ NewcorePC Windows: harness/run_sweep.py + serial device + persisted bench eviden
 | `harness/pluto_source.py` / `harness/rtl_reference.py` | RF source and limited-band reference |
 | `harness/sim.py` / `harness/tests/` | Synthetic bench, regression |
 | `harness/LOCAL_QUICKSTART.md` | Operator instructions |
-| `firmware/` | Future ESP-IDF board-specific RX-only code |
+| `firmware/` | ESP-IDF Heltec V4.3 bounded RX and one-shot TX adapter |
 | `src/sx1262_sdr/` and `tools/analyze_sweep.py` | Offline legacy SXPROBE audit |
 | `docs/` | RF safety, research evidence, REA/firmware handoff |
 

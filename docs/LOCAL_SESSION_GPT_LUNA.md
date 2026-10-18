@@ -1,6 +1,6 @@
 # GPT Luna — Local SX1262-SDR engineering session
 
-**Task:** On NewcorePC, bring up the single merged SX1262 receive-test harness, build a Heltec WiFi LoRa 32 V4 RX-only firmware adapter, and prepare an actual controlled measurement program using the existing Pluto-compatible AD9361 SDR, without overstating success or bypassing physical permissions.
+**Task:** On NewcorePC, bring up the single merged SX1262 test harness, build a Heltec WiFi LoRa 32 V4 bounded bidirectional firmware adapter, and prepare controlled conducted measurements with the existing Pluto-compatible AD9361 SDR, without overstating success or bypassing physical permissions.
 
 **Repo:** `https://github.com/hardcoreerik/SX1262-SDR` — start from latest `main`, work on a new `ai/heltec-v4-rx-bringup` branch, and preserve any working trees or other sessions. Your current model/session may be called GPT Luna; prioritize correct reproducible engineering over speed. Use your local tools to do the work; do not merely write a plan when a safe action can be completed.
 
@@ -11,10 +11,10 @@ You are the on-machine engineering agent. Work systematically, read actual files
 Before any action:
 - Read root `AGENTS.md`, `README.md`, this prompt, `harness/LOCAL_QUICKSTART.md`, `harness/README.md`, `harness/VERIFY.md`, `docs/SAFETY.md`, `docs/PLUTO_PROCEDURE.md`, `docs/RESEARCH_EVIDENCE.md`, `docs/HANDOFF.md`, and `harness/config/dut_profiles.json`.
 - Treat this folder's `harness/run_sweep.py` as **the one master runner**. Grok's harness already contains the Pluto source, RTL reference, serial profile layer, simulator, test cases and plots. Extend it; DO NOT clone a new runner, make multiple conflicting scripts, create an unrequested GUI, or rewrite working logic gratuitously.
-- `tools/analyze_sweep.py` is a historical **offline** parser only. `firmware/` has no complete flashable Heltec receiver program yet.
+- `tools/analyze_sweep.py` is a historical **offline** parser only. `firmware/esp-idf/` now contains a compiled bounded bidirectional Heltec V4.3 adapter; firmware 1.2 has been flashed to the identified COM38 board and both LoRa/GFSK RX probes have been checked. See the dated bench record for measured scope.
 - The original reported SX1262 bands (~37–1447 and 2624–3494 MHz) and the 1448–2622 MHz gap are **LilyGO-board reports**, not a calibrated Heltec result. No proof of direct SX1262 reception at 2.4 GHz exists here.
 - Never call RSSI readouts raw I/Q; the SX1262 is a packet/RSSI modem, not the LR2021 IQ interface.
-- Physical work permission is staged: you CAN inventory/read/configure development workspace, run simulations and builds; **you must ask before flashing the positively identified Heltec**; ask separately and require a physically confirmed RF setup before enabling the Pluto's transmitter. No SX1262 TX routines, no radiated off-band tests, no unknown register writes to PA/high-voltage/fuse sections.
+- Physical work permission is staged: you CAN inventory/read/configure development workspace, run simulations and builds; **you must ask before flashing the positively identified Heltec**. The user has explicitly authorized Pluto and Heltec TX/RX on the reported conducted path (Pluto -> 30 dB, 10 W, 3 GHz attenuator -> 1 ft SMA cable -> Heltec V4.3). Confirm actual ports, attenuator rating/tolerance and safe per-direction levels before enabling a run. No radiated off-band tests or unknown register writes to PA/high-voltage/fuse sections.
 
 ## 1 — Establish the exact local project state
 
@@ -84,20 +84,20 @@ Inspect:
 
 Provide a short preflight summary with **confirmed vs assumed vs missing** facts before code uses hardware GPIO or radio ports.
 
-## 4 — Build the missing Heltec RX-only firmware (first useful engineering deliverable)
+## 4 — Build the missing Heltec bidirectional bench firmware (first useful engineering deliverable)
 
-Use the installed ESP-IDF version for a maintained ESP32-S3 project under `firmware/`. Read the real Heltec board header and schematic. Construct a **minimal, modular, bounded receive-only** firmware. Do not modify OrcSDR, OrcXM or production Meshtastic code. Avoid dragging in an entire LakeShark application.
+Use the installed ESP-IDF version for a maintained ESP32-S3 project under `firmware/`. Read the real Heltec board header and schematic. Construct a **minimal, modular, bounded RX probe plus one-shot conducted TX test packet** firmware. Do not modify OrcSDR, OrcXM or production Meshtastic code. Avoid dragging in an entire LakeShark application.
 
 Required architecture:
 - Dedicated SX1262 SPI hardware abstraction with bounded BUSY wait, correct protocol framing, checked ESP errors, fixed and validated target GPIOs, SPI ownership/mutex, watchdog-friendly loops, and robust reset/recovery.
-- Verify TCXO voltage and settle delay, actual FEM LNA/bypass states and antenna switch before accessing RF. Never toggle unknown PA pins or send TX opcodes.
-- Support only safe receive operations: status/part-read, `SetStandby`, `SetRfFrequency`, documented safe `CalibrateImage`, `SetRx`, `GetStatus`, `GetDeviceErrors`, `ClearDeviceErrors`, `GetRssiInst`, and required RX-only modulation setup.
+- Verify TCXO voltage and settle delay, actual FEM LNA/bypass states and antenna switch before accessing RF. Use only documented revision-specific controls.
+- Support receiver status, bounded RSSI probing and documented PLL/error capture. The only Heltec TX operation is one fixed LoRa test packet, runtime armed for one use, fixed at -9 dBm SX1262 output setting, restricted to 902–928 MHz and followed by standby/RX restoration. Do not expose arbitrary packet or register writes.
 - Serial commands with explicit versioning, at minimum `info`, `status`, `probe`, `stop`/restore. Favor the existing LakeShark SXPROBE CSV response shape plus a unique firmware/version header, so `harness/dut_serial.py` needs only a new verified profile.
 - Print every sweep row even on invalid RSSI/PLL failure; raw error fields separate from calibrated values. Limit frequency/count, reject malformed input, time out on BUSY; never lock up forever in a scan.
-- For receive-only frequency sweeps preserve exactly what frequency word was requested and whether firmware command succeeded, PLL lock error was reported, RSSI valid and complete, receiver recovery succeeded.
-- Restore safe RF/TCXO state after interrupts/scan errors. No TX commands or generic register-write CLI.
+- For RX frequency sweeps preserve exactly what frequency word was requested and whether firmware command succeeded, PLL lock error was reported, RSSI valid and complete, receiver recovery succeeded.
+- Restore safe RF/TCXO state after interrupts/scan errors and after each one-shot TX. No generic register-write CLI.
 
-In `harness/config/dut_profiles.json`, replace **TODO only after actual protocol implementation exists**, using a fresh `heltec_v4_sx1262_rx` profile with literal firmware-source evidence. Do not replace profiles for LR2021 or LakeShark. Add unit tests for real firmware output strings, incomplete replies, timeouts, bad CRC/framing if used, boundary errors, and scan restore. Keep simulator physics honest. Limit integration changes to what the protocol requires.
+The implemented profile is `heltec_v4_3_sx1262`, with versioned firmware-source evidence and an exact firmware/board/FEM identity check. Keep the legacy `sx1262_sdr_tbd`, LR2021 and LakeShark profiles intact. Maintain parser, timeout, boundary and simulator regression coverage.
 
 Build firmware locally with esp-idf and report exact `idf.py` command, ESP-IDF version, target, binary path/size, and whether compilation passed. If firmware cannot compile, do not ask the user to flash.
 
@@ -107,28 +107,27 @@ Once firmware compiles and test fixtures are green, give the user a succinct tar
 
 - Exact Heltec device name, silkscreen revision, confirmed serial port AND USB identifiers.
 - What existing firmware/config will be preserved, backup path, recovery behavior and what cannot be preserved.
-- Built ELF/BIN and branch/commit SHA, what the new firmware does and that it includes **no SX1262 TX**.
+- Built ELF/BIN and branch/commit SHA, the RX probe behavior, the one-shot TX band/power limits, and expected serial output.
 - What observable serial output is expected after flash.
 
-Ask: **"May I flash this identified Heltec V4 on COMxx with the RX-only test firmware?"** Wait for an affirmative answer; do not infer permission from the wider project's previous Tab5 flashing authorization.
+Ask: **"May I flash this identified Heltec V4 on COMxx with the bidirectional bench firmware?"** Wait for an affirmative answer; do not infer permission from the wider project's previous Tab5 flashing authorization.
 
 After explicit approval, flash only the identified device. Capture serial output and verify receiver identification, status, frequency errors and restoration at a nominal band. Run **PLL-only** edge sweeps with the Pluto TX OFF/disconnected; save logs. Take note of actual reset/boot behavior. Verify no other COM port was changed.
 
 ## 6 — PLUTO RF AUTHORIZATION STOP (independent of flash approval)
 
-A working flash does **not** authorize RF output. Before emitting ANY controlled RF tone, the user must confirm the physically installed RF chain:
+A working flash does not itself prove the RF chain. The user has already authorized controlled TX/RX on this reported path; verify the physical connectors, attenuator orientation/rating and the per-direction levels before arming any test:
 
 ```text
 Pluto-compatible AD9361 TX port (RF OFF)
-  -> verified suitable band filter
-  -> verified adequate FIXED attenuator(s), fitted directly at source
+  -> reported 30 dB, 10 W attenuator, specified by user through 3 GHz
   -> optional step attenuator/splitter and verified loss
   -> physically verified Heltec SX1262 receive RF connector
 ```
 
 No unattenuated transmitter-to-receiver connection, no open-antenna/radiated path, no port swaps while output is enabled. Ensure connector compatibility and DC isolation as appropriate. Verify the receiver's FEM maximum input (not only the SX1262 die maximum). Confirm output/filter losses and safe maximum level; a 30 dB software floor and Pluto -20 dB gain cap are NOT a substitute for a real physical safety budget. The source must start OFF, and every abort must request OFF and independent physical verification.
 
-**Do not enable RF until the user explicitly authorizes this specific cabled configuration after visual inspection.** Use `--arm-rf` and type the real operator phrase yourself only after the user confirms. Never use `--yes` to evade verification or alter code to bypass interlocks. If the power meter or filter is missing, restrict conclusions to safe read-only experiments; mark levels uncalibrated and withhold conducted TX if safe input cannot be established.
+For Pluto TX, retain the runner's `--arm-rf`, declared attenuation/gain limits and typed operator interlock; do not bypass the filter/source-purity gate. Heltec TX is limited to its firmware's one-shot 915 MHz test at the fixed low setting into the attenuator and Pluto RX. The user's authorization is in place; do not ask again for general TX permission. If safe input levels cannot be established for a requested test, keep that test disabled and document the exact missing measurement.
 
 ## 7 — Real bench experiments: acceptance criteria
 
@@ -159,7 +158,7 @@ Abort on unexpected RF output, ambiguous antenna/cable state, excessive input, u
 
 1. A verified checkout on an `ai/<topic>` branch, exact commit recorded, no unrelated changes.
 2. Host test output and **`SX1262-SDR.log` in the folder you execute from**, plus per-run logs inside `harness/results/`.
-3. A buildable Heltec ESP-IDF RX-only firmware module with repeatable IDF version and instructions; flash ONLY if separately approved.
+3. A buildable Heltec ESP-IDF bounded RX and one-shot TX firmware module with repeatable IDF version and instructions; flash only after the exact COM38 image and recovery steps are reviewed and the user approves that flash.
 4. An updated DUT serial profile tied to actual firmware strings, timeouts and tests; do not create a second test harness.
 5. A clean hardware map and Pluto/RTL detection inventory from THIS session, not historical guesses.
 6. If user authorizes conducted RF, raw paired OFF/ON runs and verification data, source-level uncertainty, measured filter/cable losses and both nominal/edge/gap experiment summaries.
@@ -172,4 +171,4 @@ Abort on unexpected RF output, ambiguous antenna/cable state, excessive input, u
 
 Act like a careful embedded/RF engineer running real experiments with me at the bench, not a generic project planner. Before each phase give a one-paragraph status, what hardware will be touched and the expected artifact. Execute safe checks autonomously; only pause where you actually need my physical information or approval. Cite exact file paths and commits rather than speculative statements. Keep failure reports explicit and preserve all raw evidence. Offer recovery steps and **verbose Windows PowerShell how-to-run/how-to-test** commands. Avoid making changes to working OrcSDR Tab5s or other projects. When an experiment fails, distinguish a scientific negative from a test-fixture failure, and continue safe analyses without claiming success.
 
-**Begin now with phases 1–3: repository synchronization, offline regression/simulation and read-only hardware inventory. Only after those are complete, develop and compile phase 4 firmware.**
+**Current status (2026-10-16):** the user accepted no old-image backup, approved COM38 flashing and custom device firmware, and authorized the established SSTV pad/cable setup without an added filter for the listed bounded receive checks. Firmware 1.2 and Pluto RX streaming are checked. See the lower-band record for the 200 MHz peak-shift test and source-OFF sub-37 MHz survey. LoRa conducted results, a stopped edge trial and source-OFF LoRa/GFSK surveys are recorded in `docs/HELTEC_V43_BENCH_2026-10-16.md`. Current priority is SX1262 receive/synthesizer range research; one-shot Heltec TX is secondary. Do not restart the waived backup gate or treat clear PLL errors as proven reception.

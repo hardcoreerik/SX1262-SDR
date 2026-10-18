@@ -1,10 +1,10 @@
 # SX1262 Heltec V4 RF capability test plan
 
-**Single orchestration harness:** `harness/run_sweep.py`. The earlier `tools/analyze_sweep.py` is only a static log parser. Begin with `harness/LOCAL_QUICKSTART.md`. Live hardware blocked by the placeholder profile until verified board-specific firmware is built and separately authorized.
+**Single orchestration harness:** `harness/run_sweep.py`. The earlier `tools/analyze_sweep.py` is only a static log parser. Begin with `harness/LOCAL_QUICKSTART.md`. Heltec V4.3 firmware 1.2 has been flashed and checked; the generic placeholder profile remains simulation-only. See `HELTEC_V43_BENCH_2026-10-16.md` for exact measured results.
 
 ## Gates and milestones
 ### 0. Freeze scope
-Receive-only SX1262 tests. No firmware flash without explicit approval, no RF TX through SX1262. Preserve Meshtastic image/config. Document exact Heltec revision and Pluto clone's actual supported RF connectors/controls.
+Bounded receive tests plus one-shot conducted SX1262 TX. No firmware flash without explicit approval. Preserve Meshtastic image/config. Document exact Heltec revision and Pluto clone's actual supported RF connectors/controls.
 
 ### 1. Desktop host parser
 Run: python -m unittest discover -s tests -v
@@ -12,7 +12,7 @@ Run: python tools/analyze_sweep.py examples/synthetic_sxp.csv --out results/synt
 Expected: six passing unit tests; JSON reports 9 rows; 5 RX PLL errors; rf_reception_proven=false. File SX1262-SDR.log appears in invocation folder. Delete or name a NEW JSON on repeat; scripts refuse overwrite.
 
 ### 2. Firmware preflight
-Determine SX1262 SPI/RESET/BUSY/DIO1, actual Heltec TCXO supply and RF switches from schematic. Build RX-only firmware adapter with ESP-IDF and explicit no-TX opcode guard. Compile target for ESP32-S3. Add serial commands: identify, begin_rx, sweep, status, restore, emergency_stop. Log part errors and all command returns. No hardware flash until approval.
+V4.3 pin/FEM controls and firmware protocol are implemented for ESP32-S3. The user explicitly accepted no old-image backup and approved flashing COM38 and custom firmware development. Both LoRa and GFSK probes and stop have responded successfully. New devices still require their own approval.
 
 ### 3. Replicate known window
 Read manufacturer-approved SX1262 nominal frequency; test 433.92/868/915 MHz consistent with RF board path and reception laws; measure status, RSSI and actual injected external RF. Then test near 1400–1500, 2600–2680 MHz using strictly controlled conducted source; compare reported lock to published LilyGO figures. Temperature and rail conditions matter.
@@ -32,5 +32,5 @@ Characterize noise/response vs frequency, image rejection, RSSI linearity, gain 
 - RF-connected measurements with negative controls.
 - Clear capability matrix: supported by datasheet, developer report, Heltec reproduced, external-tone confirmed, calibrated.
 - Failures categorized as SPI/TCXO/config/calibration/PLL/RSSI/no-signal/filter-path.
-- Signed-off safety checklist, no TX code.
+- Signed-off safety checklist and evidence of the bounded one-shot TX control.
 - Current-directory persistent log and handoff reproducibility commands.
