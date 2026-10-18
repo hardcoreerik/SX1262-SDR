@@ -3,6 +3,8 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 build/
+firmware/esp-idf/sdkconfig
+firmware/esp-idf/sdkconfig.old
 dist/
 *.elf
 *.bin
