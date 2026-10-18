@@ -115,3 +115,8 @@ Session artifacts: `harness/results/20261017-heltec-fm-slope-session/`, includin
 pre-change snapshots, current source/hashes, bench config, operator-context,
 targeted test log and runner console. Raw run outputs remain ignored local
 evidence. Root `SX1262-SDR.log` is appended by the runner.
+
+
+### Later front-end power qualification
+
+Firmware through1.6 did not explicitly drive the V4.3 front-end regulator enableGPIO7; its actual earlierrail state was not measured. Raw results above are retained, but do not establish behavior with confirmed powered front end. Firmware1.7 corrected initialization. See [provenance correction](HELTEC_LNA_COMPARISON_2026-10-17.md).

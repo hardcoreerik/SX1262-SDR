@@ -122,3 +122,8 @@ Local evidence: `harness/results/20261017-heltec-am-response-session/`, includin
 build/flash logs, source snapshots/hashes, old/new images, bench config,
 firmware-check.json, and targeted-tests.log. Root `SX1262-SDR.log` appended.
 No LinuxCI/full suite, push, commit, or merge in this step. RF results are recorded above.
+
+
+### Later front-end power qualification
+
+Firmware through1.6 did not explicitly drive the V4.3 front-end regulator enableGPIO7; its actual earlierrail state was not measured. Raw results above are retained, but do not establish behavior with confirmed powered front end. Firmware1.7 corrected initialization. See [provenance correction](HELTEC_LNA_COMPARISON_2026-10-17.md).
