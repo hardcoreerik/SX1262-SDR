@@ -25,10 +25,10 @@ def timing_metrics(timestamps, requested_rate):
             'voice_timing_gate': bool(rate >= 8000 and in_band >= .99 and len(t) == requested_rate)}
 
 
-def capture_record(dut, out, stem, frequency_hz, bw, rate):
-    r = dut.run('capture', capture_hz=frequency_hz, capture_bw=bw, capture_rate=rate)
+def capture_record(dut, out, stem, frequency_hz, bw, rate, fem_mode='auto'):
+    r = dut.run('capture', capture_hz=frequency_hz, capture_bw=bw, capture_rate=rate, capture_fem=fem_mode)
     (out/(stem+'.serial.txt')).write_text(dut.last_raw, encoding='utf-8')
-    if not r.get('_done') or not r.get('ok') or r.get('rate_hz') != rate or r.get('bandwidth_hz') != bw or r.get('frequency_hz') != frequency_hz:
+    if not r.get('_done') or not r.get('ok') or r.get('rate_hz') != rate or r.get('bandwidth_hz') != bw or r.get('frequency_hz') != frequency_hz or r.get('fem_mode') != fem_mode:
         raise RuntimeError('Invalid rapid capture; stopped at '+stem)
     data = r['data']
     (out/(stem+'.bin')).write_bytes(data)
@@ -36,7 +36,7 @@ def capture_record(dut, out, stem, frequency_hz, bw, rate):
     metrics = timing_metrics(v['us'], rate)
     metrics.update(bandwidth_hz=bw, median_rssi_dbm=float(np.median(-v['rssi'].astype(float)/2)),
                    identical_adjacent_rssi_fraction=float(np.mean(v['rssi'][1:]==v['rssi'][:-1])),
-                   evidence='RSSI_OBSERVED', stem=stem)
+                   evidence='RSSI_OBSERVED', stem=stem, fem_mode=fem_mode)
     np.savetxt(out/(stem+'.csv'), np.column_stack((v['us'], v['rssi'], v['pcm'])),
                delimiter=',', header='completion_us,rssi_raw,device_pcm', comments='', fmt='%d')
     # Requested playback clock is explicitly separate from measured timing.
@@ -100,10 +100,13 @@ def run_offair(runner):
     freqs=[int(round(float(f)*1e6)) for f in runner.cfg['sweep']['frequencies_mhz']]
     settings=runner.cfg.get('offair_fm',{})
     reps=settings.get('reps',1);bands=settings.get('bandwidths_hz',[58600,467000])
+    modes=settings.get('fem_modes',['auto'])
     if not 1<=len(freqs)<=30 or any(not 88000000<=f<=108000000 for f in freqs):
         raise ValueError('Off-air captures require <=30 frequencies in88–108MHz')
     if not isinstance(reps,int) or not 1<=reps<=5 or not bands or any(b not in (58600,467000) for b in bands):
         raise ValueError('Invalid bounded off-air capture settings')
+    if not modes or len(modes)>2 or len(set(modes))!=len(modes) or any(m not in ('auto','lna') for m in modes):
+        raise ValueError('Invalid RX FEM comparison modes')
     meta={'simulated':False,'mode':'heltec-offair-fm-candidates','status':'started',
           'started_utc':dt.datetime.now(dt.timezone.utc).isoformat(),'config':runner.cfg,'captures':[],
           'limitations':'Receive-only RSSI envelope PCM. Candidate energy/audio statistics are not station identification or broadcast FM decoding. No raw IQ. Antenna/path/power and tuning accuracy uncalibrated.'}
@@ -116,13 +119,14 @@ def run_offair(runner):
         for hz in freqs:
             for bw in bands:
                 for rep in range(1,reps+1):
-                    stem='%dHz-%dBW-rep%d'%(hz,bw,rep)
-                    c=capture_record(dut,out,stem,hz,bw,8000)
-                    c.update(frequency_hz=hz,rep=rep)
-                    meta['captures'].append(c)
-                    if c['n']!=8000 or c['intervals_within_10pct']<.99:
-                        raise RuntimeError('Off-air capture cadence failed')
-                    runner.log('%.5fMHz BW%d: RSSI %.1fdBm; captured device envelope, station unverified'%(hz/1e6,bw,c['median_rssi_dbm']))
+                    for mode in modes:
+                        stem='%dHz-%dBW-rep%d-%s'%(hz,bw,rep,mode)
+                        c=capture_record(dut,out,stem,hz,bw,8000,fem_mode=mode)
+                        c.update(frequency_hz=hz,rep=rep)
+                        meta['captures'].append(c)
+                        if c['n']!=8000 or c['intervals_within_10pct']<.99:
+                            raise RuntimeError('Off-air capture cadence failed')
+                        runner.log('%.5fMHz BW%d %s: RSSI %.1fdBm; captured device envelope, station unverified'%(hz/1e6,bw,mode,c['median_rssi_dbm']))
         meta['status']='completed'
     except BaseException as exc:
         meta.update(status='aborted',error=str(exc));raise

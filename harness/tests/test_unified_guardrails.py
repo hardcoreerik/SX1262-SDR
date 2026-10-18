@@ -54,7 +54,7 @@ def test_incomplete_sxprobe_response_is_not_accepted():
 def test_heltec_v43_serial_rows_and_tx_gate_are_versioned():
     profile = dut_serial.load_profiles()["heltec_v4_3_sx1262"]
     info = dut_serial.parse_heltec_info(
-        "SX1262-SDR fw=1.6 board=HTIT-WB32LAF-V4.3 fem=KCT8103L tx=one-shot-armed-test-packet\n")
+        "SX1262-SDR fw=1.8 board=HTIT-WB32LAF-V4.3 fem=KCT8103L fem_power_en=1 tx=one-shot-armed-test-packet\n")
     assert dut_serial.heltec_identity_matches(profile, info)
     assert not dut_serial.heltec_identity_matches(profile, {"ok": False})
     assert not dut_serial.heltec_identity_matches(profile, {**info, "fem": "unknown"})

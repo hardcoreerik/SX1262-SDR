@@ -153,9 +153,10 @@
     "board": "HTIT-WB32LAF-V4.3",
     "fem": "KCT8103L",
     "required_firmware_identity": {
-      "firmware": "1.6",
+      "firmware": "1.8",
       "board": "HTIT-WB32LAF-V4.3",
-      "fem": "KCT8103L"
+      "fem": "KCT8103L",
+      "fem_power_en": "1"
     },
     "baud": 115200,
     "freq_min_hz": 1000000,
@@ -165,7 +166,8 @@
       "dwell_ms": 20,
       "span_hz": 50000,
       "step_hz": 1000,
-      "capture_hz": 99100000
+      "capture_hz": 99100000,
+      "capture_fem": "auto"
     },
     "commands": {
       "probe": {
@@ -176,7 +178,7 @@
       },
       "info": {
         "template": "info",
-        "done_regex": "^SX1262-SDR fw=1\\.6 board=.*$",
+        "done_regex": "^SX1262-SDR fw=1\\.8 board=.*$",
         "timeout_s": 2,
         "parser": "heltec_info"
       },
@@ -199,7 +201,7 @@
         "parser": "heltec_tx"
       },
       "capture": {
-        "template": "capture {capture_hz} {capture_bw} {capture_rate}",
+        "template": "capture {capture_hz} {capture_bw} {capture_rate} {capture_fem}",
         "done_regex": "^(SXCAPEND1 .*\\S|SXERR .*)$",
         "timeout_s": 30,
         "parser": "heltec_audio"

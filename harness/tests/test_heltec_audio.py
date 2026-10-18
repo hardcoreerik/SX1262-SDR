@@ -194,7 +194,7 @@ def test_offair_mode_only_uses_source_off_and_receive_capture(tmp_path,monkeypat
         p=profile
         def info(self):return {'ok':True,**profile['required_firmware_identity']}
         def run(self,cmd):assert cmd=='stop';return {'ok':'1','_done':True}
-    def receive(dut,out,stem,hz,bw,rate):
+    def receive(dut,out,stem,hz,bw,rate,fem_mode='auto'):
         calls.append(('capture',hz,bw,rate))
         return {'n':8000,'intervals_within_10pct':1,'median_rssi_dbm':-110}
     monkeypatch.setattr(heltec_audio,'capture_record',receive)
@@ -207,3 +207,23 @@ def test_offair_mode_only_uses_source_off_and_receive_capture(tmp_path,monkeypat
 def test_offair_cli_requires_receive_only_mode():
     import run_sweep
     assert run_sweep.main(['--offair-fm'])==2
+
+
+def test_heltec_identity_requires_frontend_power_enable_readback():
+    from dut_serial import load_profiles,parse_heltec_info,heltec_identity_matches
+    profile=load_profiles()['heltec_v4_3_sx1262']
+    text='SX1262-SDR fw=1.8 board=HTIT-WB32LAF-V4.3 fem=KCT8103L fem_power_en=1'
+    assert heltec_identity_matches(profile,parse_heltec_info(text))
+    assert not heltec_identity_matches(profile,parse_heltec_info(text.replace('fem_power_en=1','fem_power_en=0')))
+    assert not heltec_identity_matches(profile,parse_heltec_info(text.replace(' fem_power_en=1','')))
+    boot='SX1262-SDR fw=1.8 board=HTIT-WB32LAF-V4.3 fem=KCT8103L init=OK\n'
+    assert heltec_identity_matches(profile,parse_heltec_info(boot+text))
+
+
+def test_capture_fem_mode_is_explicit_and_forced_lna_is_fm_band_only():
+    _,text=fixture()
+    text=text.replace('code=ESP_OK','code=ESP_OK fem_mode=lna')
+    assert parse_heltec_audio(text)['ok']
+    assert parse_heltec_audio(text)['fem_mode']=='lna'
+    assert not parse_heltec_audio(text.replace('fem_mode=lna','fem_mode=tx'))['ok']
+    assert not parse_heltec_audio(text.replace('f_hz=99100000','f_hz=250001000'))['ok']

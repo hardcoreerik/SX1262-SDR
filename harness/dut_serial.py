@@ -149,15 +149,18 @@ def parse_heltec_audio(text):
         n, rate = int(h['n']), int(h['rate_hz'])
         status, errors = int(h['status'], 16), int(h['errors'], 16)
         cs = (status >> 1) & 7
+        fem_mode = h.get('fem_mode','auto')
         ok = (h['ok'] == '1' and h['code'] == 'ESP_OK' and e['stop'] == '1' and
-              errors == 0 and int(h.get('cal_errors', '0'), 16) == 0 and
+              errors == 0 and int(h.get('cal_errors', '0'), 16) == 0 and fem_mode in ('auto','lna') and
               (status >> 4) & 7 == 5 and cs not in (3, 4, 5, 7) and
               1 < n <= rate and rate in (1000, 2000, 4000, 8000) and
               (88000000 <= int(h['f_hz']) <= 108000000 or int(h['f_hz']) == 250001000) and int(h['bw_hz']) in (58600, 467000) and
+              (fem_mode == 'auto' or 88000000 <= int(h['f_hz']) <= 108000000) and
               len(data) == n * 7 == int(e['bytes']) and len(e['crc32']) == 8 and
               zlib.crc32(data) & 0xFFFFFFFF == int(e['crc32'], 16))
         return {'ok': bool(ok), 'data': bytes(data), 'n': n, 'rate_hz': rate,
-                'frequency_hz': int(h['f_hz']), 'bandwidth_hz': int(h['bw_hz']), 'status': status, 'errors': errors}
+                'frequency_hz': int(h['f_hz']), 'bandwidth_hz': int(h['bw_hz']), 'status': status, 'errors': errors,
+                'fem_mode': fem_mode}
     except (KeyError, ValueError):
         return {'ok': False}
 
@@ -180,10 +183,13 @@ def parse_heltec_tx(text):
 
 def parse_heltec_info(text):
     """Board and firmware identity emitted by the local Heltec V4.3 image."""
-    m = re.search(r"^SX1262-SDR fw=(\S+) board=(\S+) fem=(\S+)(?:\s+.*)?$", text, re.M)
-    if not m:
+    matches = list(re.finditer(r"^SX1262-SDR fw=(\S+) board=(\S+) fem=(\S+)(?:[^\S\n]+[^\n]*)?$", text, re.M))
+    if not matches:
         return {"ok": False}
-    return {"ok": True, "firmware": m.group(1), "board": m.group(2), "fem": m.group(3)}
+    m = matches[-1]
+    fields = dict(KV.findall(m.group(0)))
+    return {"ok": True, "firmware": m.group(1), "board": m.group(2), "fem": m.group(3),
+            "fem_power_en": fields.get("fem_power_en")}
 
 
 def heltec_identity_matches(profile, info):
@@ -290,7 +296,7 @@ class SimTransport:
     def exchange(self, line, done_re, timeout_s):
         a = line.split()
         if a and a[0] == "info" and self.profile.get("board") == "HTIT-WB32LAF-V4.3":
-            return "SX1262-SDR fw=1.6 board=HTIT-WB32LAF-V4.3 fem=KCT8103L rx_min_hz=1000000 rx_modes=lora,gfsk tx=one-shot-armed-test-packet\n", True
+            return "SX1262-SDR fw=1.8 board=HTIT-WB32LAF-V4.3 fem=KCT8103L fem_power_en=1 rx_min_hz=1000000 rx_modes=lora,gfsk tx=one-shot-armed-test-packet\n", True
         if a and a[0] == "probe" and self.profile.get("board") == "HTIT-WB32LAF-V4.3":
             hz, dwell = int(a[1]), int(a[2])
             level = self.bench.sx_rssi(hz / 1000.0, 4800)

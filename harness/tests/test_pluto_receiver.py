@@ -224,4 +224,4 @@ def test_bounded_wide_gfsk_probe_reports_actual_bandwidth(tmp_path, monkeypatch)
         assert row['reads']==8
         d.close()
     profile=dut_serial.load_profiles()['heltec_v4_3_sx1262']
-    assert profile['required_firmware_identity']['firmware']=='1.6'
+    assert profile['required_firmware_identity']['firmware']=='1.8'
