@@ -21,6 +21,7 @@
 #define PIN_DIO1 GPIO_NUM_14
 #define PIN_PA_CSD GPIO_NUM_2
 #define PIN_PA_CTX GPIO_NUM_5
+#define PIN_FEM_POWER GPIO_NUM_7
 
 #define SPI_HOST SPI2_HOST
 #define SPI_HZ 4000000
@@ -216,6 +217,15 @@ int sx1262_init(void)
     gpio_set_level(PIN_RESET, 1);
     gpio_set_level(PIN_PA_CSD, 1);
     gpio_set_level(PIN_PA_CTX, 0);
+    /* V4.3 VFEM regulator enable: official LORA_PA_POWER GPIO7. */
+    const gpio_config_t power = {.pin_bit_mask = 1ull << PIN_FEM_POWER,
+                                 .mode = GPIO_MODE_INPUT_OUTPUT,
+                                 .pull_up_en = GPIO_PULLUP_DISABLE,
+                                 .pull_down_en = GPIO_PULLDOWN_DISABLE,
+                                 .intr_type = GPIO_INTR_DISABLE};
+    if ((rc = gpio_config(&power)) != ESP_OK) return rc;
+    if ((rc = gpio_set_level(PIN_FEM_POWER, 1)) != ESP_OK) return rc;
+    vTaskDelay(pdMS_TO_TICKS(2));
 
     spi_bus_config_t bus = {.mosi_io_num = PIN_MOSI, .miso_io_num = PIN_MISO, .sclk_io_num = PIN_SCK,
                             .quadwp_io_num = -1, .quadhd_io_num = -1, .max_transfer_sz = 64};
@@ -301,10 +311,11 @@ int sx1262_probe_gfsk_bw(uint32_t frequency_hz, uint32_t dwell_ms, uint32_t band
     return probe(frequency_hz, dwell_ms, sample, bandwidth_hz);
 }
 
-int sx1262_capture(uint32_t frequency_hz, uint32_t bandwidth_hz, uint32_t rate_hz, uint8_t *records,
+int sx1262_capture(uint32_t frequency_hz, uint32_t bandwidth_hz, uint32_t rate_hz, bool force_lna, uint8_t *records,
                    uint32_t *count, sx1262_sample_t *sample, bool *stopped)
 {
     if (!initialized || !records || !count || !sample || !stopped ||
+        (force_lna && (frequency_hz < 88000000u || frequency_hz > 108000000u)) ||
         ((frequency_hz < 88000000u || frequency_hz > 108000000u) && frequency_hz != 250001000u) ||
         (rate_hz != 1000 && rate_hz != 2000 && rate_hz != 4000 && rate_hz != 8000) ||
         (bandwidth_hz != 58600 && bandwidth_hz != 467000)) return ESP_ERR_INVALID_ARG;
@@ -313,6 +324,8 @@ int sx1262_capture(uint32_t frequency_hz, uint32_t bandwidth_hz, uint32_t rate_h
     memset(sample, 0, sizeof(*sample));
     if (xSemaphoreTake(radio_mutex, pdMS_TO_TICKS(100)) != pdTRUE) return ESP_ERR_TIMEOUT;
     int rc = set_frontend_rx(frequency_hz);
+    /* Documented RX LNA state; gain at FM frequencies is unverified. */
+    if (rc == ESP_OK && force_lna) rc = gpio_set_level(PIN_PA_CTX, 0);
     const uint8_t clear[] = {0, 0};
     if (rc == ESP_OK) rc = write_command(CMD_CLEAR_DEVICE_ERRORS, clear, sizeof(clear));
     if (rc == ESP_OK) rc = set_frequency(frequency_hz, 1);
@@ -411,4 +424,9 @@ int sx1262_stop(void)
     int rc = write_command(CMD_SET_STANDBY, (uint8_t[]){0x00}, 1);
     set_frontend_rx(915000000u);
     return rc;
+}
+
+bool sx1262_frontend_power_enabled(void)
+{
+    return initialized && gpio_get_level(PIN_FEM_POWER) == 1;
 }

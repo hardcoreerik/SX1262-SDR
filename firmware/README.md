@@ -55,3 +55,8 @@ COM38 now runs1.5: capture syntax is `capture <99100000|250001000> <58600|467000
 ### Firmware 1.6 (2026-10-17)
 
 COM38 now runs1.6. The bounded rapid `capture` command accepts88–108MHz as well as250.001MHz. Each burst remains at most one second; no TX limits changed. Use `run_sweep.py --heltec-audio --offair-fm` with <=30 FM-band candidate frequencies and bounded repetitions; this mode keeps PlutoTXOFF. See `docs/HELTEC_OFFAIR_FM_2026-10-17.md`; station reception remains unverified.
+
+
+### Firmware1.8 / built-in LNA comparison
+
+COM38 now runs1.8. Since1.7, front-end regulatorGPIO7 is explicitly enabled and its digital readback is required. Earlierrail state was uncontrolled. `capture` accepts optional `auto|lna`; forcedLNA is restricted to88–108MHz. `auto` keeps the prior band-dependent selection. The approved12 RX-only comparisons completed; reportedlevels rose but broadcastaudio remains unverified. See `docs/HELTEC_LNA_COMPARISON_2026-10-17.md`.

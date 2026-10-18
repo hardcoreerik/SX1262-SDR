@@ -39,7 +39,7 @@ static void command(char *line)
     char *op = strtok_r(line, " \t\r\n", &save);
     if (!op) return;
     if (!strcmp(op, "info")) {
-        printf("SX1262-SDR fw=1.6 board=HTIT-WB32LAF-V4.3 fem=KCT8103L rx_min_hz=1000000 rx_modes=lora,gfsk,gfsk58,gfsk467 tx=one-shot-armed-test-packet\n");
+        printf("SX1262-SDR fw=1.8 board=HTIT-WB32LAF-V4.3 fem=KCT8103L rx_min_hz=1000000 rx_modes=lora,gfsk,gfsk58,gfsk467 tx=one-shot-armed-test-packet fem_power_en=%u\n", sx1262_frontend_power_enabled());
     } else if (!strcmp(op, "status")) {
         print_status();
     } else if (!strcmp(op, "stop")) {
@@ -67,24 +67,27 @@ static void command(char *line)
         char *f = strtok_r(NULL, " \t\r\n", &save);
         char *b = strtok_r(NULL, " \t\r\n", &save);
         char *r = strtok_r(NULL, " \t\r\n", &save);
+        char *mode = strtok_r(NULL, " \t\r\n", &save);
         uint32_t hz, bw, rate;
         if (!f || !b || !r || strtok_r(NULL, " \t\r\n", &save) ||
+            (mode && strcmp(mode, "auto") && strcmp(mode, "lna")) ||
             !parse_u32(f, &hz) || !parse_u32(b, &bw) || !parse_u32(r, &rate) ||
             ((hz < 88000000u || hz > 108000000u) && hz != 250001000u) ||
+            (mode && !strcmp(mode, "lna") && (hz < 88000000u || hz > 108000000u)) ||
             (bw != 58600 && bw != 467000) ||
             (rate != 1000 && rate != 2000 && rate != 4000 && rate != 8000)) {
-            puts("SXERR usage=capture_hz_bw_rate"); return;
+            puts("SXERR usage=capture_hz_bw_rate_auto_or_lna"); return;
         }
         uint8_t *data = malloc(rate * 7);
         if (!data) { puts("SXERR capture=no_memory"); return; }
         uint32_t n = 0;
         bool stopped = false;
         sx1262_sample_t s = {0};
-        int rc = sx1262_capture(hz, bw, rate, data, &n, &s, &stopped);
+        int rc = sx1262_capture(hz, bw, rate, mode && !strcmp(mode, "lna"), data, &n, &s, &stopped);
         /* All serial output follows standby; serial bandwidth cannot pace sampling. */
         printf("SXCAP1 ok=%u f_hz=%" PRIu32 " bw_hz=%" PRIu32 " rate_hz=%" PRIu32
-               " n=%" PRIu32 " status=0x%02X errors=0x%04X cal_errors=0x%04X code=%s\n",
-               rc == ESP_OK && s.valid, hz, bw, rate, n, s.status, s.errors, s.cal_errors, esp_err_to_name(rc));
+               " n=%" PRIu32 " status=0x%02X errors=0x%04X cal_errors=0x%04X code=%s fem_mode=%s\n",
+               rc == ESP_OK && s.valid, hz, bw, rate, n, s.status, s.errors, s.cal_errors, esp_err_to_name(rc), mode ? mode : "auto");
         for (uint32_t off = 0; off < n * 7; off += 56) {
             printf("SXDATA1 offset=%" PRIu32 " hex=", off);
             for (uint32_t j = off; j < n * 7 && j < off + 56; ++j) printf("%02X", data[j]);
@@ -122,10 +125,10 @@ void app_main(void)
 {
     int rc = sx1262_init();
     if (rc != ESP_OK) {
-        printf("SX1262-SDR fw=1.6 init=FAIL code=%s\n", esp_err_to_name(rc));
+        printf("SX1262-SDR fw=1.8 init=FAIL code=%s\n", esp_err_to_name(rc));
         return;
     }
-    printf("SX1262-SDR fw=1.6 board=HTIT-WB32LAF-V4.3 fem=KCT8103L init=OK\n");
+    printf("SX1262-SDR fw=1.8 board=HTIT-WB32LAF-V4.3 fem=KCT8103L init=OK\n");
     puts("SXREADY1 commands=info,status,probe,capture,armtx,tx,stop");
     char line[128];
     for (;;) {
