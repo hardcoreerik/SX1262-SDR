@@ -1,6 +1,6 @@
 # Local Quickstart — ONE SX1262-SDR harness
 
-The operator's detailed task description is at [../docs/LOCAL_SESSION_GPT_LUNA.md](../docs/LOCAL_SESSION_GPT_LUNA.md). **This repo is host-simulation-ready, not yet live-Heltec-ready.** The placeholder `sx1262_sdr_tbd` refuses to operate real radios by design.
+The operator's detailed task description is at [../docs/LOCAL_SESSION_GPT_LUNA.md](../docs/LOCAL_SESSION_GPT_LUNA.md). The repo now has a compiled Heltec V4.3 firmware adapter and identity-checked serial profile. **Firmware 1.2 is flashed; discrete conducted LoRa receive checks and source-OFF LoRa/GFSK surveys have run.** The generic `sx1262_sdr_tbd` placeholder still refuses real hardware.
 
 ## 0. Update safely on NewcorePC (PowerShell)
 
@@ -21,7 +21,7 @@ git rev-parse --short HEAD
 
 ```powershell
 python --version
-python -m pip install numpy matplotlib pytest
+python -m pip install numpy scipy matplotlib pytest
 python -m pytest -q harness/tests
 python -m unittest discover -s tests -v
 python harness/run_sweep.py --sim --config harness/config/sim_example.json --no-plot
@@ -44,13 +44,13 @@ Inventory Windows ESP-IDF toolchain, Python, serial VID/PID, specific Heltec boa
 
 ## 3. Firmware engineering, NO FLASH until permission
 
-Implement a modular **RX-only ESP-IDF** receiver for the actual Heltec revision and board pins. First support `info`, `probe` and `status` with bounded sweep arguments, explicit SPI/BUSY timeouts, PLL and image-cal errors, state restoration, and honest machine-readable results. Match or explicitly version the existing `sxprobe` format; add a verified profile replacing the TODO in `harness/config/dut_profiles.json` only after matching actual firmware. Compile and run host fixture tests. Save current firmware and partition/NVS metadata if supported. Then ask for **specific user authorization for flashing the identified port**.
+The ESP-IDF firmware and `heltec_v4_3_sx1262` profile are implemented. The firmware supports bounded RSSI/status probing and a one-shot armed LoRa packet at -9 dBm chip setting in 902–928 MHz. For the current COM38 device, the user accepted proceeding without the old-image backup and explicitly approved custom firmware and flashing. Firmware 1.2 uses native USB Serial/JTAG and supports optional `probe ... gfsk` with a fixed 4.8 kHz filter.
 
-## 4. Conducted Pluto testing, SECOND separate permission
+## 4. Conducted Pluto testing
 
-The user must inspect a physically isolated and terminated **Pluto RF output -> proper filter -> fixed attenuator(s) -> Heltec SX1262 RF input** path; measure/verify output limits, board FEM input limits, filter losses and cables. A software-interlock minimum of 30 dB fixed attenuation and -20 dB max hardware gain is not, by itself, a certified RF safety budget.
+The user authorized both radios to TX/RX on the reported conducted setup: **Pluto -> 30 dB, 10 W, 3 GHz attenuator -> 1 ft SMA cable -> Heltec V4.3**. The user confirmed the same TX1/30 dB pad/cable arrangement used for SSTV and explicitly authorized bounded unfiltered receive checks at the listed frequencies. Absolute levels and source purity remain unverified at the new frequencies. Pluto RX capture is integrated and streaming-tested; it is not a calibrated reference.
 
-Do not enable Pluto TX or call `harness/run_sweep.py` in hardware mode without the separate explicit authorization, a completed input budget, and operator hand-on verification. Hardware mode requires `--arm-rf` and an exact manual typed confirmation; `--yes` is simulation-only. All experimental off-band work stays **conducted/receive-only** at the Heltec.
+Full sweeps retain the source filter and source-verification requirements. `--nominal-check` is fixed to 915 MHz; `--receive-check` permits at most 20 operator-authorized frequencies within the source range and <=3 GHz, at gains -80/-70/-60 dB. Both require `--arm-rf` and the typed interlock. Failed preflight RX/PLL probes never enable the source. `--yes` is simulation-only. `--heltec-tx --arm-heltec-tx` is one 915 MHz packet and requires moving the attenuator to RX1.
 
 Example **for a future validated system only**:
 
@@ -68,4 +68,29 @@ A high-frequency source can't be verified by an RTL-SDR V4 beyond its validated 
 
 Publish a concise evidence-led `docs/HANDOFF.md` with the actual commands/results and outstanding blockers. Put reusable REA findings in a properly attributed inbox document, leaving RSA's generated archives alone. Work in an `ai/heltec-v4-rx-firmware` or similarly named branch; request review before merging code.
 
-Current hardware status: **zero physical experiments yet in this repository.**
+Current hardware status and evidence: **see [the dated bench record](../docs/HELTEC_V43_BENCH_2026-10-16.md)**. The cable was last confirmed on TX1; Pluto TX is shut down between probes and on every exit.
+
+Source-OFF survey (no RF arming):
+
+```powershell
+python harness/run_sweep.py --pll-only --gfsk-probe --port COM38 --uri ip:fishball.local --freqs 37,433.92,915,1300,1400,1500,2000,2400,2450,2624,2700,3000 --no-plot
+```
+
+`--gfsk-probe` selects the narrow GFSK/XOSC companion mode; omit it for LoRa/125 kHz/RC. These are different receiver configurations and must not be pooled as equivalent measurements. Source-OFF survey results do not demonstrate external reception.
+
+Lower-band offset experiments are recorded in
+[the lower-band bench note](../docs/HELTEC_V43_LOWER_BAND_2026-10-16.md).
+`--receive-check --gfsk-probe --rx-offsets-khz=-5,0,135,225` varies the RX tune
+while keeping the source fixed per selected frequency. This path is limited
+to three sources <=340 MHz, nineteen offsets within +/-400 kHz and fixed
+-60 dB source drive; the existing RF arming and typed interlock still apply.
+
+For the complementary source-axis experiment, use
+`--receive-check --gfsk-probe --fixed-rx-mhz 250.001 --freqs 249.99975,250,250.00025`.
+The source tone is each listed base frequency +1 kHz; every Heltec probe uses
+the fixed RX frequency. This mode permits <=20 nearby sources within 400 kHz
+of RX, both source and RX <=340 MHz, at fixed -60 dB source gain. It cannot be
+combined with `--rx-offsets-khz`. RF arming, typed confirmation, pad and identity
+checks remain mandatory. Firmware re-enters RX for each reading; fixed frequency
+does not mean a continuously held PLL. Treat DDS-model frequency as a prediction,
+not independently calibrated RF.

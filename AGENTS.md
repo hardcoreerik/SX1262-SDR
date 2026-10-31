@@ -4,7 +4,7 @@ This is the authoritative engineering contract for AI agents working on [hardcor
 
 ## Objective and actual hardware
 
-Discover the **true receive and synthesizer limits of the Semtech SX1262 in the Heltec WiFi LoRa 32 V4 (ESP32-S3)**. Replicate or disprove published out-of-spec tuning windows and the reported PLL unlock gap around 1448–2622 MHz using error/status evidence and independently controlled conducted RF.
+Discover the **true receive and synthesizer limits of the Semtech SX1262 in the Heltec WiFi LoRa 32 V4 (ESP32-S3)**. Replicate or disprove published out-of-spec tuning windows and the reported PLL unlock gap around 1448–2622 MHz using error/status evidence and independently controlled conducted RF. The current bench scope also includes bounded bidirectional conducted checks: Pluto TX to Heltec RX and Heltec TX to Pluto RX.
 
 User-provided instruments: a **Pluto-compatible Zynq-7020/AD9361 clone** as low-power cabled source and possible high-band reference RX, plus an RTL-SDR V4 where its own tuning range permits. Discover ports and device identification afresh; values in previous reports, such as COM17, COM39, ip:192.168.2.1, are HISTORICAL, not authoritative for the current session.
 
@@ -18,7 +18,7 @@ User-provided instruments: a **Pluto-compatible Zynq-7020/AD9361 clone** as low-
 4. `harness/dut_serial.py` and `harness/config/dut_profiles.json`: hardware-specific serial protocol. The placeholder `sx1262_sdr_tbd` deliberately **refuses live operation**. Do not disable this protection just to run a sweep.
 5. `harness/sim.py`, `harness/tests/`: simulator and regression testing; NEVER publish simulated values as hardware results.
 6. `tools/analyze_sweep.py` / `src/sx1262_sdr/analysis.py`: **offline import and auditing only**, not another live harness.
-7. `firmware/`: eventual board-specific, RX-only ESP-IDF adapter. Not currently flashable.
+7. `firmware/`: board-specific ESP-IDF adapter with bounded RX probing and one-shot test TX. Hardware behavior remains unverified until the identified board is flashed and checked.
 
 Preserve Grok's good harness architecture, no rewrite, no second runner, no desktop UI until requested. Extend shared data schemas rather than creating competing output formats.
 
@@ -34,9 +34,9 @@ Preserve Grok's good harness architecture, no rewrite, no second runner, no desk
 
 - Local session MAY inspect checked-out source, inventory USB/serial, query device properties, run simulations, build firmware and analyze logs **without changing equipment**.
 - Local session MUST ask the user for explicit approval **before first flashing or erasing the named, positively identified Heltec board**. Protect Meshtastic/NVS/partitions; back up what is recoverable, provide rollback and recognize when no safe backup is possible.
-- Local session MUST separately request explicit user confirmation before **enabling the Pluto's RF output** after a physically validated conducted cable/filter/attenuator/DC-block setup. Operator must inspect cabling and safe input levels. A chat authorization does not substitute for physical verification.
-- No SX1262 TX commands, PA experiments, unauthorized over-the-air emissions, destructive eFuse writes, or undocumented writes of uncertain electrical consequence. Use receive-only command allowlists and bounds.
-- No live bypass of `--arm-rf`, the typed interlock, mandatory attenuation, known board revision/FEM, or TODO-profile gating. `--yes` is simulation-only.
+- The user has explicitly authorized Pluto and Heltec TX/RX for the reported conducted path (Pluto -> 30 dB, 10 W, 3 GHz attenuator -> 1 ft SMA cable -> Heltec V4.3). Verify installed port orientation, attenuator rating/tolerance, and per-direction input levels before enabling an RF test. Authorization does not certify measured power or source purity.
+- Heltec TX is limited to one fixed LoRa test packet at a time, with runtime arming, fixed low SX1262 output setting, and 902–928 MHz test band. Pluto TX remains under `--arm-rf`, attenuation/gain limits and source shutdown. No CW, repeated/unbounded TX, off-band radiation, undocumented PA/fuse writes, or destructive eFuse operations.
+- No live bypass of `--arm-rf`, the typed interlock, mandatory attenuation, known board revision/FEM, or firmware identity checks. `--yes` is simulation-only.
 - Do not assume that an attenuator's declared dB value certifies safe input; measure/verify the clone's output and every FEM's maximum allowable level as actually installed. On communications failure, stop and independently confirm RF output is OFF.
 
 ## Tests, provenance, data integrity
@@ -44,7 +44,7 @@ Preserve Grok's good harness architecture, no rewrite, no second runner, no desk
 From repository root:
 
 ```powershell
-python -m pip install numpy matplotlib pytest
+python -m pip install numpy scipy matplotlib pytest
 python -m pytest -q harness/tests
 python -m unittest discover -s tests -v
 python harness/run_sweep.py --sim --config harness/config/sim_example.json --no-plot

@@ -115,7 +115,7 @@
     "chip": "SX1262",
     "kind": "rssi_sweep",
     "todo": true,
-    "status": "TODO: hardcoreerik/SX1262-SDR has no firmware yet (main @ f0038cd holds only README.md). Fill in template/done_regex/parser from the Heltec WiFi LoRa 32 V4 firmware's console once it exists. Until then this profile runs only in --sim (it borrows the LakeShark sxprobe syntax as a stand-in).",
+    "status": "Legacy generic placeholder; use heltec_v4_3_sx1262 for the implemented board-specific protocol. Simulation only.",
     "board": "Heltec WiFi LoRa 32 V4 (SX1262 + external FEM; record revision and FEM mode in meta)",
     "baud": 115200,
     "freq_min_hz": 1000000,
@@ -142,6 +142,76 @@
     },
     "source": [
       "placeholder; see lakeshark_sx1262 for the reference command this stands in for"
+    ]
+  },
+  "heltec_v4_3_sx1262": {
+    "chip": "SX1262",
+    "kind": "rssi_sweep",
+    "todo": false,
+    "instant_probe": true,
+    "status": "Bounded firmware protocol implemented; live runs require matching firmware identity and operator RF preflight",
+    "board": "HTIT-WB32LAF-V4.3",
+    "fem": "KCT8103L",
+    "required_firmware_identity": {
+      "firmware": "1.8",
+      "board": "HTIT-WB32LAF-V4.3",
+      "fem": "KCT8103L",
+      "fem_power_en": "1"
+    },
+    "baud": 115200,
+    "freq_min_hz": 1000000,
+    "freq_max_hz": 3500000000,
+    "defaults": {
+      "probe_mode": "lora",
+      "dwell_ms": 20,
+      "span_hz": 50000,
+      "step_hz": 1000,
+      "capture_hz": 99100000,
+      "capture_fem": "auto"
+    },
+    "commands": {
+      "probe": {
+        "template": "probe {freq_hz} {dwell_ms} {probe_mode}",
+        "done_regex": "^SXPROBE1 .*\\S$",
+        "timeout_s": 2,
+        "parser": "heltec_probe"
+      },
+      "info": {
+        "template": "info",
+        "done_regex": "^SX1262-SDR fw=1\\.8 board=.*$",
+        "timeout_s": 2,
+        "parser": "heltec_info"
+      },
+      "armtx": {
+        "template": "armtx",
+        "done_regex": "^SXTXARM1 .*\\S$",
+        "timeout_s": 2,
+        "parser": "kv"
+      },
+      "stop": {
+        "template": "stop",
+        "done_regex": "^SXSTOP1 .*\\S$",
+        "timeout_s": 2,
+        "parser": "kv"
+      },
+      "tx": {
+        "template": "tx {freq_hz}",
+        "done_regex": "^SXTX1 .*\\S$",
+        "timeout_s": 4,
+        "parser": "heltec_tx"
+      },
+      "capture": {
+        "template": "capture {capture_hz} {capture_bw} {capture_rate} {capture_fem}",
+        "done_regex": "^(SXCAPEND1 .*\\S|SXERR .*)$",
+        "timeout_s": 30,
+        "parser": "heltec_audio"
+      }
+    },
+    "source": [
+      "firmware/esp-idf/main/main.c: command output and arm/one-shot TX gate",
+      "firmware/esp-idf/main/sx1262.c: SX1262 SPI, RX probe, LoRa TX and bounded frequency/power controls",
+      "Heltec official HTIT-WB32LAF V4.3 pin map: https://github.com/HelTecAutomation/Heltec_ESP32/blob/master/src/driver/board-config.h",
+      "Heltec official V4.3 FEM routing: https://github.com/HelTecAutomation/HeltecWiKi/blob/main/news/lna/lna.md"
     ]
   }
 }

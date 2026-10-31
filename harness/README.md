@@ -2,7 +2,7 @@
 
 Target board for this repo: **Heltec WiFi LoRa 32 V4** (SX1262), source **Pluto-compatible AD9361**, reference **RTL-SDR V4** where supported. This is the **one authoritative bench runner**; the root `tools/analyze_sweep.py` is only an offline log audit parser.
 
-**Start with [LOCAL_QUICKSTART.md](LOCAL_QUICKSTART.md).** The consolidated RX-only guardrails require a source-OFF control per measurement, reject partial PLL-failed scans, and enforce an explicit physical TX arming step. These changes were made after the historical simulated sample-output run below. The default DUT profile `sx1262_sdr_tbd` is a **TODO placeholder** until this repo's firmware exists: it runs in `--sim` only and refuses real hardware.
+**Start with [LOCAL_QUICKSTART.md](LOCAL_QUICKSTART.md).** The Heltec V4.3 profile uses the bounded bidirectional firmware protocol and checks firmware/board/FEM identity before RF phases. Pluto TX still requires an explicit physical interlock, a configured source filter, and a verified reference check. The older `sx1262_sdr_tbd` profile remains a TODO placeholder and refuses real hardware.
 
 This harness tests whether an SX1262 or LR2021 board really receives at a given frequency, and how well. It uses a
 **PlutoSDR** as the signal source and an **RTL-SDR** as the reference receiver. It puts into practice the test plan in
