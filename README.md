@@ -79,3 +79,9 @@ NewcorePC Windows: harness/run_sweep.py + serial device + persisted bench eviden
 The harness includes GPL-3.0-licensed components with a `harness/LICENSE` file and attribution to SAMS0N1TE's [LakeShark](https://github.com/SAMS0N1TE/LakeShark) and [lr2021-sdr](https://github.com/SAMS0N1TE/lr2021-sdr) investigations. Review licensing before extracting/reusing portions in other projects. Consult the maintained private [REA-Results](https://github.com/hardcoreerik/REA-Results) archive rather than altering generated reports manually.
 
 **No SX1262 IQ stream, no successful 2.4 GHz unlock, no calibrated reception, and no authorized flash is implied by this repository.**
+
+## Support development
+
+If this project is useful to you, consider supporting its development. Across ORC projects, support helps fund development time, hardware testing, receiver compatibility, and decoder work.
+
+[GitHub Sponsors](https://github.com/sponsors/hardcoreerik) · [Ko-fi](https://ko-fi.com/hardcoreerik) · [PayPal](https://paypal.me/hardcoreerik)
