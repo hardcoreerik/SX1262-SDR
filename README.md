@@ -26,7 +26,7 @@
 
 ```powershell
 git pull --ff-only
-python -m pip install numpy matplotlib pytest
+python -m pip install numpy scipy matplotlib pytest
 python -m pytest -q harness/tests
 python -m unittest discover -s tests -v
 python harness/run_sweep.py --sim --config harness/config/sim_example.json --no-plot
